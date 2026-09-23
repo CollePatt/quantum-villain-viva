@@ -43,6 +43,7 @@ import {
 
 type AppConfig = {
   hasApiKey: boolean
+  requiresAccessCode: boolean
   realtimeModel: string
   realtimeVoice: string
   graderModel: string
@@ -69,6 +70,9 @@ type RealtimeTransportEvent = {
 
 const INTRO_COPY =
   "You are awake, inconveniently, aboard Professor Nocturne's orbital viva chamber. Earth is below. A theatrical device is charging. Answer three quantum questions and the chamber returns you home. Fail, and Nocturne becomes unbearably smug."
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+const ACCESS_CODE_STORAGE_KEY = 'quantum-villain-viva-access-code'
 
 const DIFFICULTY_OPTIONS: Array<{
   id: DifficultyMode
@@ -100,6 +104,7 @@ const MANUAL_TAUNTS = [
 
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
+  requiresAccessCode: false,
   realtimeModel: 'gpt-realtime-2.1',
   realtimeVoice: 'cedar',
   graderModel: 'local-heuristic',
@@ -111,7 +116,51 @@ const STATIC_PREVIEW_CONFIG: AppConfig = {
 }
 
 function shouldUseStaticPreview(): boolean {
-  return typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')
+  return (
+    typeof window !== 'undefined' &&
+    window.location.hostname.endsWith('github.io') &&
+    API_BASE_URL.length === 0
+  )
+}
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
+function readStoredAccessCode(): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  try {
+    return typeof window.localStorage.getItem === 'function'
+      ? window.localStorage.getItem(ACCESS_CODE_STORAGE_KEY) ?? ''
+      : ''
+  } catch {
+    return ''
+  }
+}
+
+function writeStoredAccessCode(accessCode: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    if (
+      accessCode &&
+      typeof window.localStorage.setItem === 'function'
+    ) {
+      window.localStorage.setItem(ACCESS_CODE_STORAGE_KEY, accessCode)
+      return
+    }
+
+    if (typeof window.localStorage.removeItem === 'function') {
+      window.localStorage.removeItem(ACCESS_CODE_STORAGE_KEY)
+    }
+  } catch {
+    // Private browsing and test environments may block storage.
+  }
 }
 
 function createEmptyMetrics(): ExamMetrics {
@@ -263,6 +312,7 @@ export default function App() {
   const [appError, setAppError] = useState<string | null>(null)
   const [reportTab, setReportTab] = useState<ReportTab>('scorecard')
   const [difficulty, setDifficulty] = useState<DifficultyMode>('survival')
+  const [accessCode, setAccessCode] = useState(readStoredAccessCode)
   const [isManualOpen, setIsManualOpen] = useState(false)
   const [isPerilSurging, setIsPerilSurging] = useState(false)
   const [displayPrompt, setDisplayPrompt] = useState('Select a topic and begin.')
@@ -283,6 +333,7 @@ export default function App() {
   const isReportUnlocked = exam.phase === 'report'
   const selectedDifficulty = DIFFICULTY_OPTIONS.find((option) => option.id === difficulty)
   const manualLocked = difficulty === 'doom'
+  const needsAccessCode = Boolean(config?.requiresAccessCode)
   const promptText = canStart
     ? 'Select a topic and begin the transmission.'
     : activePart === 'follow-up'
@@ -327,7 +378,7 @@ export default function App() {
     let isMounted = true
 
     if (!shouldUseStaticPreview()) {
-      fetchJson<AppConfig>('/api/config')
+      fetchJson<AppConfig>(apiUrl('/api/config'))
         .then((nextConfig) => {
           if (isMounted) {
             setConfig(nextConfig)
@@ -349,6 +400,15 @@ export default function App() {
       window.speechSynthesis?.cancel()
     }
   }, [])
+
+  useEffect(() => {
+    writeStoredAccessCode(accessCode.trim())
+  }, [accessCode])
+
+  function accessHeaders(): HeadersInit {
+    const cleanCode = accessCode.trim()
+    return cleanCode ? { 'X-Viva-Access-Code': cleanCode } : {}
+  }
 
   function triggerPerilSurge() {
     if (perilTimerRef.current !== null) {
@@ -630,6 +690,12 @@ export default function App() {
       return
     }
 
+    if (needsAccessCode && !accessCode.trim()) {
+      setAppError(null)
+      setStatusMessage('Enter the private review access code to open the voice channel.')
+      return
+    }
+
     const startedAt = new Date().toISOString()
     sessionStartedAtRef.current = performance.now()
     setMetrics({
@@ -642,8 +708,9 @@ export default function App() {
     setStatusMessage('Opening the voice channel...')
 
     try {
-      const token = await fetchJson<TokenResponse>('/api/realtime-token', {
+      const token = await fetchJson<TokenResponse>(apiUrl('/api/realtime-token'), {
         method: 'POST',
+        headers: accessHeaders(),
         body: JSON.stringify({ topicId: topic.id }),
       })
 
@@ -739,8 +806,9 @@ export default function App() {
     setStatusMessage('Calculating planetary consequences...')
 
     try {
-      const nextReport = await fetchJson<ExamReport>('/api/grade-exam', {
+      const nextReport = await fetchJson<ExamReport>(apiUrl('/api/grade-exam'), {
         method: 'POST',
+        headers: accessHeaders(),
         body: JSON.stringify({
           topicId: topic.id,
           turns,
@@ -1009,6 +1077,20 @@ export default function App() {
                   ))}
                 </select>
               </label>
+
+              {needsAccessCode ? (
+                <label className="access-console">
+                  <span>Access code</span>
+                  <input
+                    type="password"
+                    value={accessCode}
+                    onChange={(event) => setAccessCode(event.target.value)}
+                    placeholder="Private review code"
+                    autoComplete="off"
+                    disabled={!canStart}
+                  />
+                </label>
+              ) : null}
 
               <div className="question-card">
                 <div className="question-meta">

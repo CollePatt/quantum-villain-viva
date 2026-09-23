@@ -15,6 +15,7 @@ beforeEach(() => {
     ok: true,
     json: async () => ({
       hasApiKey: false,
+      requiresAccessCode: false,
       realtimeModel: 'gpt-realtime-2.1',
       realtimeVoice: 'cedar',
       graderModel: 'gpt-5.6-luna',

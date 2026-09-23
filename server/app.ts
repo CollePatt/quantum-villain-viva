@@ -23,6 +23,20 @@ import { buildGradingPrompt, buildVillainInstructions } from '../src/lib/examPro
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'
 const DEFAULT_REALTIME_VOICE = 'cedar'
 const DEFAULT_GRADER_MODEL = 'gpt-4.1-mini'
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://collepatt.github.io',
+]
+
+type RateLimitBucket = {
+  count: number
+  resetAt: number
+}
+
+const rateLimitBuckets = new Map<string, RateLimitBucket>()
 
 type CreateClientSecret = (
   params: ClientSecretCreateParams,
@@ -36,11 +50,18 @@ type GradeWithOpenAI = (
 
 export type ServerDeps = {
   apiKey?: string
+  accessCode?: string
+  adminCode?: string
+  allowedOrigins?: string[]
   createClientSecret?: CreateClientSecret
   gradeWithOpenAI?: GradeWithOpenAI
   realtimeModel?: string
   realtimeVoice?: string
   graderModel?: string
+  rateLimitEnabled?: boolean
+  rateLimitMax?: number
+  rateLimitAdminMax?: number
+  rateLimitWindowMinutes?: number
 }
 
 const ErrorResponseSchema = z.object({
@@ -52,15 +73,57 @@ const ErrorResponseSchema = z.object({
 
 function getConfig(deps: ServerDeps) {
   const apiKey = deps.apiKey ?? process.env.OPENAI_API_KEY ?? ''
+  const accessCode = deps.accessCode ?? process.env.VIVA_ACCESS_CODE ?? ''
+  const adminCode = deps.adminCode ?? process.env.VIVA_ADMIN_CODE ?? ''
   return {
     apiKey,
+    accessCode,
+    adminCode,
     hasApiKey: apiKey.trim().length > 0 && !apiKey.includes('paste-your-key'),
+    requiresAccessCode: Boolean(accessCode.trim() || adminCode.trim()),
     realtimeModel:
       deps.realtimeModel ?? process.env.OPENAI_REALTIME_MODEL ?? DEFAULT_REALTIME_MODEL,
     realtimeVoice:
       deps.realtimeVoice ?? process.env.OPENAI_REALTIME_VOICE ?? DEFAULT_REALTIME_VOICE,
     graderModel: deps.graderModel ?? process.env.OPENAI_GRADER_MODEL ?? DEFAULT_GRADER_MODEL,
+    allowedOrigins:
+      deps.allowedOrigins ?? parseCsv(process.env.ALLOWED_ORIGINS, DEFAULT_ALLOWED_ORIGINS),
+    rateLimitEnabled:
+      deps.rateLimitEnabled ?? parseBoolean(process.env.RATE_LIMIT_ENABLED, false),
+    rateLimitMax: deps.rateLimitMax ?? parseInteger(process.env.RATE_LIMIT_MAX, 20),
+    rateLimitAdminMax:
+      deps.rateLimitAdminMax ?? parseInteger(process.env.RATE_LIMIT_ADMIN_MAX, 200),
+    rateLimitWindowMinutes:
+      deps.rateLimitWindowMinutes ??
+      parseInteger(process.env.RATE_LIMIT_WINDOW_MINUTES, 60),
   }
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+function parseInteger(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseCsv(value: string | undefined, fallback: string[]): string[] {
+  const parsed =
+    value
+      ?.split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean) ?? []
+
+  return parsed.length > 0 ? parsed : fallback
 }
 
 function sendValidationError(response: Response, message = 'Request payload is invalid.') {
@@ -79,6 +142,131 @@ function sendServerError(response: Response, message: string) {
       message,
     },
   })
+}
+
+function sendAuthError(response: Response) {
+  response.status(401).json({
+    error: {
+      code: 'invalid_access_code',
+      message: 'Enter the private review access code to unlock hosted voice mode.',
+    },
+  })
+}
+
+function getRuntimeOrigin(request: Request): string | null {
+  const host = request.headers.host
+  if (!host) {
+    return null
+  }
+
+  const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
+  return `${protocol}://${host}`
+}
+
+function isAllowedOrigin(request: Request, origin: string, allowedOrigins: string[]) {
+  if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    return true
+  }
+
+  return origin === getRuntimeOrigin(request)
+}
+
+function readAccessCode(request: Request): string {
+  const headerCode = request.header('x-viva-access-code')
+  if (headerCode) {
+    return headerCode.trim()
+  }
+
+  const authHeader = request.header('authorization')
+  if (authHeader?.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice('bearer '.length).trim()
+  }
+
+  const body = request.body as { accessCode?: unknown } | undefined
+  return typeof body?.accessCode === 'string' ? body.accessCode.trim() : ''
+}
+
+function checkAccess(request: Request, config: ReturnType<typeof getConfig>) {
+  if (!config.requiresAccessCode) {
+    return { ok: true, isAdmin: false }
+  }
+
+  const submittedCode = readAccessCode(request)
+  const isAdmin = Boolean(config.adminCode && submittedCode === config.adminCode)
+  const isReviewer = Boolean(config.accessCode && submittedCode === config.accessCode)
+
+  return {
+    ok: isAdmin || isReviewer,
+    isAdmin,
+  }
+}
+
+function getClientKey(request: Request): string {
+  const forwardedFor = request.header('x-forwarded-for')
+  const firstForwarded = forwardedFor?.split(',')[0]?.trim()
+  return firstForwarded || request.ip || request.socket.remoteAddress || 'unknown'
+}
+
+function enforceRateLimit(
+  request: Request,
+  response: Response,
+  config: ReturnType<typeof getConfig>,
+  isAdmin: boolean,
+): boolean {
+  if (!config.rateLimitEnabled) {
+    return true
+  }
+
+  const now = Date.now()
+  const max = isAdmin ? config.rateLimitAdminMax : config.rateLimitMax
+  const windowMs = config.rateLimitWindowMinutes * 60 * 1000
+  const key = `${isAdmin ? 'admin' : 'review'}:${getClientKey(request)}:${request.path}`
+  const current = rateLimitBuckets.get(key)
+
+  if (!current || current.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs })
+    response.setHeader('X-RateLimit-Limit', String(max))
+    response.setHeader('X-RateLimit-Remaining', String(Math.max(0, max - 1)))
+    return true
+  }
+
+  if (current.count >= max) {
+    const retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000)
+    response.setHeader('Retry-After', String(retryAfterSeconds))
+    response.setHeader('X-RateLimit-Limit', String(max))
+    response.setHeader('X-RateLimit-Remaining', '0')
+    response.status(429).json({
+      error: {
+        code: 'rate_limited',
+        message: 'Too many hosted voice requests. Wait a bit, then try again.',
+      },
+      retryAfterSeconds,
+    })
+    return false
+  }
+
+  current.count += 1
+  response.setHeader('X-RateLimit-Limit', String(max))
+  response.setHeader('X-RateLimit-Remaining', String(Math.max(0, max - current.count)))
+  return true
+}
+
+function enforceHostedAccess(
+  request: Request,
+  response: Response,
+  config: ReturnType<typeof getConfig>,
+): { ok: true; isAdmin: boolean } | { ok: false } {
+  const access = checkAccess(request, config)
+  if (!access.ok) {
+    sendAuthError(response)
+    return { ok: false }
+  }
+
+  if (!enforceRateLimit(request, response, config, access.isAdmin)) {
+    return { ok: false }
+  }
+
+  return { ok: true, isAdmin: access.isAdmin }
 }
 
 async function defaultCreateClientSecret(
@@ -188,6 +376,25 @@ function realtimeSessionParams(
 export function createApp(deps: ServerDeps = {}): Express {
   const app = express()
 
+  app.use((request, response, next) => {
+    const config = getConfig(deps)
+    const origin = request.header('origin')
+
+    if (origin && isAllowedOrigin(request, origin, config.allowedOrigins)) {
+      response.setHeader('Access-Control-Allow-Origin', origin)
+      response.setHeader('Vary', 'Origin')
+      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Viva-Access-Code')
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    }
+
+    if (request.method === 'OPTIONS') {
+      response.status(204).end()
+      return
+    }
+
+    next()
+  })
+
   app.use(express.json({ limit: '1mb' }))
 
   app.get('/api/health', (_request: Request, response: Response) => {
@@ -198,6 +405,7 @@ export function createApp(deps: ServerDeps = {}): Express {
     const config = getConfig(deps)
     response.json({
       hasApiKey: config.hasApiKey,
+      requiresAccessCode: config.requiresAccessCode,
       realtimeModel: config.realtimeModel,
       realtimeVoice: config.realtimeVoice,
       graderModel: config.graderModel,
@@ -222,6 +430,11 @@ export function createApp(deps: ServerDeps = {}): Express {
     }
 
     const config = getConfig(deps)
+    const access = enforceHostedAccess(request, response, config)
+    if (!access.ok) {
+      return
+    }
+
     if (!config.hasApiKey) {
       response.status(503).json({
         error: {
@@ -270,6 +483,10 @@ export function createApp(deps: ServerDeps = {}): Express {
 
     const config = getConfig(deps)
     const topic = getTopicById(parsed.data.topicId)
+    const access = enforceHostedAccess(request, response, config)
+    if (!access.ok) {
+      return
+    }
 
     if (!config.hasApiKey) {
       response.json(gradeExamLocally(topic, parsed.data.turns, parsed.data.metrics))

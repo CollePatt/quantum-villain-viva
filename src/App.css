@@ -354,6 +354,7 @@ h3 {
 
 button,
 textarea,
+input,
 select {
   font: inherit;
 }
@@ -587,6 +588,34 @@ dl div {
   cursor: not-allowed;
 }
 
+.access-console {
+  display: grid;
+  gap: 7px;
+  color: #d3aa48;
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.access-console input {
+  min-height: 46px;
+  border: 1px solid rgba(211, 170, 72, 0.35);
+  border-radius: 3px;
+  padding: 0 12px;
+  color: #fff6e8;
+  background: rgba(7, 10, 11, 0.9);
+  font-weight: 800;
+  caret-color: #d3aa48;
+}
+
+.access-console input::placeholder {
+  color: rgba(185, 198, 195, 0.58);
+}
+
+.access-console input:disabled {
+  opacity: 0.5;
+}
+
 .planet-meter {
   display: grid;
   gap: 5px;
@@ -702,6 +731,7 @@ textarea::placeholder {
 }
 
 textarea:focus,
+input:focus,
 select:focus,
 button:focus-visible {
   outline: 2px solid rgba(96, 211, 207, 0.46);

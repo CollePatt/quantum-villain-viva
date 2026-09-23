@@ -25,6 +25,16 @@ describe('API routes', () => {
     expect(response.body.error.code).toBe('missing_openai_api_key')
   })
 
+  it('requires the private review code when access control is configured', async () => {
+    const app = createApp({ apiKey: 'sk-test', accessCode: 'review-code' })
+    const response = await request(app)
+      .post('/api/realtime-token')
+      .send({ topicId: 'tunneling' })
+
+    expect(response.status).toBe(401)
+    expect(response.body.error.code).toBe('invalid_access_code')
+  })
+
   it('rejects an invalid topic', async () => {
     const app = createApp({ apiKey: '' })
     const response = await request(app)
@@ -66,6 +76,7 @@ describe('API routes', () => {
   it('returns a created client secret when the key boundary is mocked', async () => {
     const app = createApp({
       apiKey: 'sk-test',
+      accessCode: 'review-code',
       createClientSecret: async () => ({
         value: 'ek_test',
         expires_at: 1_800_000_000,
@@ -78,6 +89,7 @@ describe('API routes', () => {
     })
     const response = await request(app)
       .post('/api/realtime-token')
+      .set('X-Viva-Access-Code', 'review-code')
       .send({ topicId: 'harmonic-oscillator' })
 
     expect(response.status).toBe(200)

@@ -39,6 +39,44 @@ OPENAI_API_KEY=sk-proj-...
 
 The permanent API key stays server-side. The browser only receives short-lived Realtime credentials from the local Express server.
 
+## Hosted Review
+
+The repo includes Vercel serverless API routes in `api/` so hosted voice mode can mint Realtime credentials without exposing the permanent OpenAI key.
+
+Vercel project settings:
+
+```text
+Framework Preset: Vite
+Root Directory: ./
+Build Command: npm run build
+Output Directory: dist
+Install Command: npm install
+```
+
+Required Vercel environment variables:
+
+```bash
+OPENAI_API_KEY=sk-proj-...
+VIVA_ACCESS_CODE=share-this-with-testers
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1
+OPENAI_REALTIME_VOICE=cedar
+OPENAI_GRADER_MODEL=gpt-4.1-mini
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_MAX=20
+RATE_LIMIT_WINDOW_MINUTES=60
+```
+
+Optional:
+
+```bash
+VIVA_ADMIN_CODE=private-owner-code
+RATE_LIMIT_ADMIN_MAX=200
+ALLOWED_ORIGINS=https://collepatt.github.io,https://your-vercel-app.vercel.app
+VITE_API_BASE_URL=https://your-vercel-app.vercel.app
+```
+
+`VITE_API_BASE_URL` is only needed when a separately hosted frontend, such as GitHub Pages, should call the Vercel API. If the frontend and API are both deployed by the same Vercel project, leave it blank.
+
 ## Tech Stack
 
 - Vite, React, and TypeScript
