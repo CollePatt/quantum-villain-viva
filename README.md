@@ -15,7 +15,7 @@ The hosted preview runs without secrets: questions are read with browser speech 
 - Cinematic transmission intro and animated exam chamber UI.
 - Five quantum mechanics topics: tunneling, measurement, spin, harmonic oscillator, and entanglement.
 - Deterministic three-question exam flow with one follow-up maximum per answer.
-- Villain persona delivered through concise prompts, pacing, and visual state.
+- Realtime villain reactions that respond to the user's answer before follow-ups or transitions.
 - Rubric scorecard with per-question feedback and review suggestions.
 - Demo metrics for duration, first response latency, interruptions, and transcript count.
 

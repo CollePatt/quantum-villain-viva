@@ -27,6 +27,8 @@ import type { ExamMetrics, ExamReport, ExamTurn, Question, TopicId } from './dom
 import { gradeExamLocally } from './domain/grading'
 import { getTopicById, topics } from './domain/topics'
 import {
+  buildAnswerTransitionPrompt,
+  buildFinalAnswerPrompt,
   buildFollowUpPrompt,
   buildQuestionPrompt,
   buildVillainInstructions,
@@ -139,16 +141,55 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-function shouldDemandClarification(answer: string): boolean {
+function normalizePhysicsText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+}
+
+function conceptMatched(answer: string, concept: string): boolean {
+  const normalizedAnswer = normalizePhysicsText(answer)
+  const conceptWords = normalizePhysicsText(concept)
+    .split(' ')
+    .filter((word) => word.length > 4)
+
+  if (conceptWords.length === 0) {
+    return false
+  }
+
+  const hits = conceptWords.filter((word) => normalizedAnswer.includes(word))
+  return hits.length >= Math.min(2, conceptWords.length)
+}
+
+function shouldDemandClarification(question: Question, answer: string): boolean {
   const normalized = answer.trim().toLowerCase()
   const wordCount = normalized.split(/\s+/).filter(Boolean).length
+  const conceptHits = question.expectedConcepts.filter((concept) =>
+    conceptMatched(answer, concept),
+  ).length
+
   return (
     wordCount < 12 ||
+    conceptHits < 2 ||
     normalized.includes("don't know") ||
     normalized.includes('do not know') ||
     normalized.includes('idk') ||
     normalized.includes('not sure')
   )
+}
+
+function localQuestionBeat(question: Question, position: number): string {
+  return `The chamber seals. Question ${position}. ${question.prompt}`
+}
+
+function localFollowUpBeat(question: Question): string {
+  return `Thin. Painfully thin. Clarify this before the planet notices. ${question.followUp}`
+}
+
+function localTransitionBeat(question: Question, position: number): string {
+  return `Hm. You have delayed catastrophe by a few seconds. Question ${position}. ${question.prompt}`
+}
+
+function localFinalBeat(): string {
+  return 'Enough. The chamber calculates whether your planet remains mostly where you left it.'
 }
 
 export default function App() {
@@ -268,17 +309,50 @@ export default function App() {
     window.speechSynthesis.speak(utterance)
   }
 
-  function deliverPrompt(question: Question, position: number, kind: ActiveAnswerPart) {
-    const text = kind === 'follow-up' ? question.followUp : question.prompt
-
+  function deliverScenePrompt(prompt: string, fallbackText: string) {
     if (isConnected && !isDemoMode) {
-      sendVoicePrompt(
-        kind === 'follow-up' ? buildFollowUpPrompt(question) : buildQuestionPrompt(question, position),
-      )
+      sendVoicePrompt(prompt)
       return
     }
 
-    speakLocally(text)
+    speakLocally(fallbackText)
+  }
+
+  function deliverQuestionPrompt(question: Question, position: number) {
+    deliverScenePrompt(
+      buildQuestionPrompt(question, position),
+      localQuestionBeat(question, position),
+    )
+  }
+
+  function deliverFollowUpPrompt(question: Question, answer: string) {
+    deliverScenePrompt(buildFollowUpPrompt(question, answer), localFollowUpBeat(question))
+  }
+
+  function deliverTransitionPrompt(
+    question: Question,
+    answer: string,
+    followUpAnswer: string,
+    nextQuestion: Question,
+    nextPosition: number,
+  ) {
+    deliverScenePrompt(
+      buildAnswerTransitionPrompt(
+        question,
+        answer,
+        followUpAnswer,
+        nextQuestion,
+        nextPosition,
+      ),
+      localTransitionBeat(nextQuestion, nextPosition),
+    )
+  }
+
+  function deliverFinalPrompt(question: Question, answer: string, followUpAnswer: string) {
+    deliverScenePrompt(
+      buildFinalAnswerPrompt(question, answer, followUpAnswer),
+      localFinalBeat(),
+    )
   }
 
   function resetForTopic(nextTopicId: TopicId) {
@@ -417,7 +491,7 @@ export default function App() {
     setIsSpeaking(false)
     setReportTab('scorecard')
     setStatusMessage('Question 1 transmitted. Answer to proceed.')
-    speakLocally(topic.questions[0].prompt)
+    deliverQuestionPrompt(topic.questions[0], 1)
   }
 
   async function startVoiceExam() {
@@ -581,14 +655,14 @@ export default function App() {
     if (activePart === 'main') {
       const answer = appendText(mainAnswer, freshSpeech)
 
-      if (shouldDemandClarification(answer) && !exam.followUpsUsed[currentQuestion.id]) {
+      if (shouldDemandClarification(currentQuestion, answer) && !exam.followUpsUsed[currentQuestion.id]) {
         const nextExam = recordFollowUp(topic, exam)
         setExam(nextExam)
         setMainAnswer(answer)
         setFollowUpAnswer('')
         setActivePart('follow-up')
-        setStatusMessage('Nocturne demands one clarification.')
-        deliverPrompt(currentQuestion, exam.questionIndex + 1, 'follow-up')
+        setStatusMessage('Nocturne reacts, then demands one clarification.')
+        deliverFollowUpPrompt(currentQuestion, answer)
         return
       }
 
@@ -609,6 +683,7 @@ export default function App() {
     setExam(nextExam)
 
     if (nextExam.phase === 'grading') {
+      deliverFinalPrompt(currentQuestion, capturedAnswer, followUp)
       void gradeExam(nextExam.completedTurns)
       return
     }
@@ -617,8 +692,14 @@ export default function App() {
     const nextQuestionNumber = nextExam.questionIndex + 1
     const askingExam = markQuestionAsked(nextExam)
     setExam(askingExam)
-    setStatusMessage(`Question ${nextQuestionNumber} transmitted. Answer to proceed.`)
-    deliverPrompt(nextQuestion, nextQuestionNumber, 'main')
+    setStatusMessage(`Nocturne reacts. Question ${nextQuestionNumber} incoming.`)
+    deliverTransitionPrompt(
+      currentQuestion,
+      capturedAnswer,
+      followUp,
+      nextQuestion,
+      nextQuestionNumber,
+    )
   }
 
   function interruptExaminer() {
@@ -938,9 +1019,9 @@ export default function App() {
                 <div className="method-note">
                   <Brain size={18} />
                   <p>
-                    Questions are fixed rubric items. Live mode reads them through
-                    Realtime voice; preview mode uses local browser speech for reusable
-                    prompts without spending API credits.
+                    Questions are fixed rubric items. Live mode uses a Realtime model
+                    for short villain reactions and spoken transitions; preview mode
+                    uses local browser speech without spending API credits.
                   </p>
                 </div>
               </div>
