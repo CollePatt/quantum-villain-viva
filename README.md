@@ -29,6 +29,8 @@ Without an OpenAI key, the app still runs in local preview mode, reads the fixed
 
 The GitHub Pages build is a static review preview. It does not include the Express API, OpenAI Realtime, or any API key. It still runs the full three-question flow with browser speech and client-side heuristic grading.
 
+On accounts/plans that support Pages for the repository visibility, enable GitHub Pages with GitHub Actions as the source, then run the `Deploy static preview` workflow.
+
 ## OpenAI setup
 
 1. Go to `platform.openai.com` and sign in.
