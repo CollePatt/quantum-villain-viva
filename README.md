@@ -25,6 +25,10 @@ Open the Vite URL printed in the terminal, usually `http://127.0.0.1:5173`.
 
 Without an OpenAI key, the app still runs in local preview mode, reads the fixed questions with browser speech, and uses the local heuristic grader. Live microphone mode turns on after `OPENAI_API_KEY` is set in `.env`.
 
+## Static review link
+
+The GitHub Pages build is a static review preview. It does not include the Express API, OpenAI Realtime, or any API key. It still runs the full three-question flow with browser speech and client-side heuristic grading.
+
 ## OpenAI setup
 
 1. Go to `platform.openai.com` and sign in.

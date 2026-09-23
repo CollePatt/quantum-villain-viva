@@ -24,6 +24,7 @@ import {
   type ExamState,
 } from './domain/examState'
 import type { ExamMetrics, ExamReport, ExamTurn, Question, TopicId } from './domain/schemas'
+import { gradeExamLocally } from './domain/grading'
 import { getTopicById, topics } from './domain/topics'
 import {
   buildFollowUpPrompt,
@@ -53,6 +54,18 @@ type TokenResponse = {
 
 type ActiveAnswerPart = 'main' | 'follow-up'
 type ReportTab = 'scorecard' | 'transcript' | 'metrics'
+
+const STATIC_PREVIEW_CONFIG: AppConfig = {
+  hasApiKey: false,
+  realtimeModel: 'gpt-realtime-2.1',
+  realtimeVoice: 'cedar',
+  graderModel: 'local-heuristic',
+  openSourceRoadmap: [
+    'Ollama local grader',
+    'Whisper or local STT transcription path',
+    'Local TTS layer behind the same exam state machine',
+  ],
+}
 
 function createEmptyMetrics(): ExamMetrics {
   return {
@@ -182,9 +195,9 @@ export default function App() {
           setConfig(nextConfig)
         }
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (isMounted) {
-          setAppError(normalizeError(error))
+          setConfig(STATIC_PREVIEW_CONFIG)
         }
       })
 
@@ -459,6 +472,15 @@ export default function App() {
       setReportTab('scorecard')
       setStatusMessage('Report unlocked.')
     } catch (error: unknown) {
+      if (!config?.hasApiKey) {
+        const nextReport = gradeExamLocally(topic, turns, finalMetrics)
+        setReport(nextReport)
+        setExam((current) => ({ ...current, phase: 'report' }))
+        setReportTab('scorecard')
+        setStatusMessage('Report unlocked in local preview.')
+        return
+      }
+
       setAppError(normalizeError(error))
       setStatusMessage('Could not grade the exam.')
     }
