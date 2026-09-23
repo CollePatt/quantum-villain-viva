@@ -172,6 +172,10 @@
   margin-top: 28px;
 }
 
+.chamber-shell.peril-surge {
+  animation: chamber-warning 1.3s ease-out;
+}
+
 .chamber-shell::before,
 .chamber-shell::after {
   position: absolute;
@@ -204,7 +208,22 @@
 .exam-stage,
 .report-stage {
   position: relative;
+  z-index: 2;
+}
+
+.peril-flash {
+  position: absolute;
+  inset: 0;
   z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(185, 31, 58, 0.16), transparent 18% 82%, rgba(185, 31, 58, 0.16)),
+    repeating-linear-gradient(180deg, transparent 0 18px, rgba(255, 92, 112, 0.08) 19px 20px);
+}
+
+.chamber-shell.peril-surge .peril-flash {
+  animation: peril-flash 1.3s ease-out;
 }
 
 .topbar {
@@ -287,6 +306,50 @@ h3 {
 .session-pill strong {
   color: #fff6e8;
   font-size: 1.02rem;
+}
+
+.protocol-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(211, 170, 72, 0.26);
+  border-radius: 3px;
+  padding: 10px;
+  background: rgba(5, 8, 9, 0.82);
+}
+
+.protocol-panel > span {
+  color: #d3aa48;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.protocol-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.protocol-options button {
+  min-height: 34px;
+  border-color: rgba(96, 211, 207, 0.22);
+  border-radius: 2px;
+  padding: 0 6px;
+  background: rgba(7, 17, 18, 0.8);
+  color: #b9c6c3;
+  font-size: 0.62rem;
+}
+
+.protocol-options button.active {
+  border-color: rgba(211, 170, 72, 0.64);
+  background: rgba(122, 29, 43, 0.58);
+  color: #fff6e8;
+}
+
+.protocol-panel small {
+  color: #9fb3af;
+  font-size: 0.7rem;
+  line-height: 1.35;
 }
 
 button,
@@ -572,6 +635,10 @@ dl div {
   background: #b91f3a;
 }
 
+.chamber-shell.peril-surge .planet-meter {
+  animation: meter-warning 1.3s ease-out;
+}
+
 .question-card {
   min-height: 178px;
   padding: 18px;
@@ -838,6 +905,231 @@ dd {
   color: #d3aa48;
 }
 
+.manual-toggle {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 20;
+  border-color: rgba(211, 170, 72, 0.5);
+  background:
+    linear-gradient(180deg, rgba(211, 170, 72, 0.16), rgba(16, 22, 22, 0.94)),
+    rgba(8, 12, 13, 0.96);
+  color: #fff6e8;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.38);
+}
+
+.manual-toggle::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 210px;
+  border: 1px solid rgba(96, 211, 207, 0.26);
+  border-radius: 2px;
+  padding: 7px 9px;
+  background: rgba(4, 8, 9, 0.96);
+  color: #b9c6c3;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+  content: 'Contraband notes. Nocturne will notice.';
+  pointer-events: none;
+}
+
+.manual-toggle:hover::after,
+.manual-toggle.active::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.manual-toggle.active {
+  border-color: rgba(96, 211, 207, 0.64);
+  color: #eafcf9;
+}
+
+.manual-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.manual-book {
+  width: min(900px, 100%);
+  max-height: min(76vh, 760px);
+  overflow: auto;
+  border: 1px solid rgba(211, 170, 72, 0.5);
+  border-radius: 4px;
+  background:
+    linear-gradient(90deg, rgba(255, 246, 232, 0.04), transparent 18% 82%, rgba(255, 246, 232, 0.04)),
+    repeating-linear-gradient(180deg, rgba(255, 246, 232, 0.03) 0 1px, transparent 1px 28px),
+    #090d0d;
+  box-shadow:
+    0 28px 86px rgba(0, 0, 0, 0.58),
+    inset 0 0 72px rgba(162, 25, 51, 0.14);
+}
+
+.manual-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(211, 170, 72, 0.25);
+  padding: 18px;
+  background: rgba(6, 10, 10, 0.96);
+}
+
+.manual-header h2 {
+  margin-bottom: 0;
+}
+
+.manual-close {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-color: rgba(96, 211, 207, 0.28);
+  background: rgba(4, 8, 9, 0.86);
+}
+
+.manual-pages {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.manual-page {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  border: 1px solid rgba(96, 211, 207, 0.18);
+  border-radius: 3px;
+  padding: 13px;
+  background: rgba(5, 9, 10, 0.78);
+}
+
+.manual-page.current {
+  border-color: rgba(211, 170, 72, 0.62);
+  box-shadow: inset 0 0 28px rgba(211, 170, 72, 0.08);
+}
+
+.manual-page-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #82d8d3;
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.manual-page p,
+.manual-page li {
+  color: #c7d2ce;
+  font-size: 0.82rem;
+  line-height: 1.42;
+}
+
+.manual-page p,
+.manual-page ul {
+  margin: 0;
+}
+
+.manual-page ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 17px;
+}
+
+.manual-page h3 {
+  margin: 4px 0 0;
+  color: #d3aa48;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.manual-page details {
+  border-top: 1px solid rgba(211, 170, 72, 0.2);
+  padding-top: 8px;
+}
+
+.manual-page summary {
+  color: #fff6e8;
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.manual-page details p {
+  margin-top: 8px;
+  color: #fff6e8;
+}
+
+@keyframes chamber-warning {
+  0%,
+  100% {
+    border-color: rgba(211, 170, 72, 0.42);
+  }
+
+  18%,
+  52% {
+    border-color: rgba(255, 92, 112, 0.78);
+    box-shadow:
+      0 26px 80px rgba(0, 0, 0, 0.48),
+      inset 0 0 0 1px rgba(255, 92, 112, 0.22),
+      inset 0 0 120px rgba(185, 31, 58, 0.28);
+  }
+}
+
+@keyframes peril-flash {
+  0%,
+  100% {
+    opacity: 0;
+  }
+
+  20%,
+  54% {
+    opacity: 1;
+  }
+}
+
+@keyframes meter-warning {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  15% {
+    transform: translateX(-3px);
+  }
+
+  30% {
+    transform: translateX(3px);
+  }
+
+  45% {
+    transform: translateX(-2px);
+  }
+
+  60% {
+    transform: translateX(2px);
+  }
+}
+
 @keyframes signal-glow {
   0%,
   100% {
@@ -968,5 +1260,32 @@ dd {
 
   .view-tabs {
     overflow-x: auto;
+  }
+
+  .manual-toggle {
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .manual-toggle::after {
+    display: none;
+  }
+
+  .manual-backdrop {
+    align-items: center;
+    padding: 12px;
+  }
+
+  .manual-book {
+    max-height: 82vh;
+  }
+
+  .manual-header {
+    padding: 14px;
+  }
+
+  .manual-pages {
+    grid-template-columns: 1fr;
+    padding: 12px;
   }
 }

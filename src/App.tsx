@@ -1,12 +1,14 @@
 import {
   AudioLines,
   BadgeCheck,
+  BookOpen,
   Brain,
   OctagonPause,
   Play,
   Send,
   Square,
   TimerReset,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { RealtimeAgent, RealtimeSession } from '@openai/agents/realtime'
@@ -55,6 +57,7 @@ type TokenResponse = {
 }
 
 type ActiveAnswerPart = 'main' | 'follow-up'
+type DifficultyMode = 'survival' | 'viva' | 'doom'
 type ReportTab = 'scorecard' | 'transcript' | 'metrics'
 type RealtimeTransportEvent = {
   type: string
@@ -66,6 +69,34 @@ type RealtimeTransportEvent = {
 
 const INTRO_COPY =
   "You are awake, inconveniently, aboard Professor Nocturne's orbital viva chamber. Earth is below. A theatrical device is charging. Answer three quantum questions and the chamber returns you home. Fail, and Nocturne becomes unbearably smug."
+
+const DIFFICULTY_OPTIONS: Array<{
+  id: DifficultyMode
+  label: string
+  description: string
+}> = [
+  {
+    id: 'survival',
+    label: 'Survival',
+    description: 'Contraband notes available. Nocturne hates this.',
+  },
+  {
+    id: 'viva',
+    label: 'Viva',
+    description: 'Sharper follow-ups. Notes remain within reach.',
+  },
+  {
+    id: 'doom',
+    label: 'Doom',
+    description: 'Field manual sealed. Planetary arrogance engaged.',
+  },
+]
+
+const MANUAL_TAUNTS = [
+  'Ah. Consulting forbidden notes. How very undergraduate.',
+  'Read quickly. The atmosphere is not known for its patience.',
+  'Fine. Take the manual. It will not explain the terror for you.',
+]
 
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
@@ -159,20 +190,36 @@ function conceptMatched(answer: string, concept: string): boolean {
   return hits.length >= Math.min(2, conceptWords.length)
 }
 
-function shouldDemandClarification(question: Question, answer: string): boolean {
+function conceptHitCount(question: Question, answer: string): number {
+  return question.expectedConcepts.filter((concept) => conceptMatched(answer, concept)).length
+}
+
+function shouldDemandClarification(
+  question: Question,
+  answer: string,
+  difficulty: DifficultyMode,
+): boolean {
   const normalized = answer.trim().toLowerCase()
   const wordCount = normalized.split(/\s+/).filter(Boolean).length
-  const conceptHits = question.expectedConcepts.filter((concept) =>
-    conceptMatched(answer, concept),
-  ).length
-
-  return (
-    wordCount < 12 ||
-    conceptHits < 2 ||
+  const conceptHits = conceptHitCount(question, answer)
+  const ignoranceSignal =
     normalized.includes("don't know") ||
     normalized.includes('do not know') ||
     normalized.includes('idk') ||
     normalized.includes('not sure')
+
+  if (difficulty === 'survival') {
+    return wordCount < 8 || conceptHits < 1 || ignoranceSignal
+  }
+
+  if (difficulty === 'doom') {
+    return wordCount < 16 || conceptHits < Math.min(3, question.expectedConcepts.length) || ignoranceSignal
+  }
+
+  return (
+    wordCount < 12 ||
+    conceptHits < 2 ||
+    ignoranceSignal
   )
 }
 
@@ -190,6 +237,10 @@ function localTransitionBeat(question: Question, position: number): string {
 
 function localFinalBeat(): string {
   return 'Enough. The chamber calculates whether your planet remains mostly where you left it.'
+}
+
+function buildManualPhrase(question: Question): string {
+  return `Work these into your own answer: ${question.expectedConcepts.slice(0, 3).join('; ')}.`
 }
 
 export default function App() {
@@ -211,6 +262,9 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [appError, setAppError] = useState<string | null>(null)
   const [reportTab, setReportTab] = useState<ReportTab>('scorecard')
+  const [difficulty, setDifficulty] = useState<DifficultyMode>('survival')
+  const [isManualOpen, setIsManualOpen] = useState(false)
+  const [isPerilSurging, setIsPerilSurging] = useState(false)
   const [displayPrompt, setDisplayPrompt] = useState('Select a topic and begin.')
   const [introText, setIntroText] = useState('')
   const [hasEnteredChamber, setHasEnteredChamber] = useState(false)
@@ -220,11 +274,15 @@ export default function App() {
   const activePartRef = useRef<ActiveAnswerPart>('main')
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
+  const perilTimerRef = useRef<number | null>(null)
+  const manualTauntIndexRef = useRef(0)
 
   const currentQuestion = getCurrentQuestion(topic, exam)
   const canStart = exam.phase === 'idle' || exam.phase === 'report' || exam.phase === 'error'
   const canAnswer = exam.phase === 'answering'
   const isReportUnlocked = exam.phase === 'report'
+  const selectedDifficulty = DIFFICULTY_OPTIONS.find((option) => option.id === difficulty)
+  const manualLocked = difficulty === 'doom'
   const promptText = canStart
     ? 'Select a topic and begin the transmission.'
     : activePart === 'follow-up'
@@ -284,10 +342,25 @@ export default function App() {
 
     return () => {
       isMounted = false
+      if (perilTimerRef.current !== null) {
+        window.clearTimeout(perilTimerRef.current)
+      }
       sessionRef.current?.close()
       window.speechSynthesis?.cancel()
     }
   }, [])
+
+  function triggerPerilSurge() {
+    if (perilTimerRef.current !== null) {
+      window.clearTimeout(perilTimerRef.current)
+    }
+
+    setIsPerilSurging(true)
+    perilTimerRef.current = window.setTimeout(() => {
+      setIsPerilSurging(false)
+      perilTimerRef.current = null
+    }, 1300)
+  }
 
   function speakLocally(text: string) {
     if (
@@ -355,6 +428,50 @@ export default function App() {
     )
   }
 
+  function handleDifficultyChange(nextDifficulty: DifficultyMode) {
+    setDifficulty(nextDifficulty)
+    if (nextDifficulty === 'doom') {
+      setIsManualOpen(false)
+    }
+
+    const nextOption = DIFFICULTY_OPTIONS.find((option) => option.id === nextDifficulty)
+    setStatusMessage(`${nextOption?.label ?? 'Viva'} protocol armed.`)
+  }
+
+  function handleManualToggle() {
+    if (isManualOpen) {
+      setIsManualOpen(false)
+      return
+    }
+
+    if (manualLocked) {
+      setStatusMessage('Doom protocol has sealed the field manual.')
+      triggerPerilSurge()
+      return
+    }
+
+    setIsManualOpen(true)
+
+    const taunt = MANUAL_TAUNTS[manualTauntIndexRef.current % MANUAL_TAUNTS.length]
+    manualTauntIndexRef.current += 1
+    setStatusMessage(taunt)
+
+    if (canStart || isSpeaking) {
+      return
+    }
+
+    if (isConnected && !isDemoMode) {
+      sendVoicePrompt(
+        `The candidate opened the stolen field manual. Say one short irritated villain line, then stop. Suggested line: "${taunt}"`,
+      )
+      return
+    }
+
+    if (isDemoMode) {
+      speakLocally(taunt)
+    }
+  }
+
   function resetForTopic(nextTopicId: TopicId) {
     sessionRef.current?.close()
     window.speechSynthesis?.cancel()
@@ -373,6 +490,8 @@ export default function App() {
     setIsSpeaking(false)
     setAppError(null)
     setReportTab('scorecard')
+    setIsManualOpen(false)
+    setIsPerilSurging(false)
     setStatusMessage('Topic selected. The chamber is listening.')
     consumedIdsRef.current = new Set()
   }
@@ -490,6 +609,7 @@ export default function App() {
     setIsDemoMode(true)
     setIsSpeaking(false)
     setReportTab('scorecard')
+    setIsManualOpen(difficulty === 'survival')
     setStatusMessage('Question 1 transmitted. Answer to proceed.')
     deliverQuestionPrompt(topic.questions[0], 1)
   }
@@ -502,6 +622,7 @@ export default function App() {
     setFollowUpAnswer('')
     setActivePart('main')
     setIsSpeaking(false)
+    setIsManualOpen(false)
     consumedIdsRef.current = new Set()
 
     if (!config?.hasApiKey) {
@@ -655,12 +776,19 @@ export default function App() {
     if (activePart === 'main') {
       const answer = appendText(mainAnswer, freshSpeech)
 
-      if (shouldDemandClarification(currentQuestion, answer) && !exam.followUpsUsed[currentQuestion.id]) {
+      if (
+        shouldDemandClarification(currentQuestion, answer, difficulty) &&
+        !exam.followUpsUsed[currentQuestion.id]
+      ) {
         const nextExam = recordFollowUp(topic, exam)
         setExam(nextExam)
         setMainAnswer(answer)
         setFollowUpAnswer('')
         setActivePart('follow-up')
+        triggerPerilSurge()
+        if (difficulty === 'survival') {
+          setIsManualOpen(true)
+        }
         setStatusMessage('Nocturne reacts, then demands one clarification.')
         deliverFollowUpPrompt(currentQuestion, answer)
         return
@@ -675,12 +803,22 @@ export default function App() {
 
   function completeTurn(answer: string, followUp: string) {
     const capturedAnswer = answer.trim() || 'No answer captured.'
+    const combinedAnswer = appendText(capturedAnswer, followUp)
+    const weakAfterFollowUp = shouldDemandClarification(
+      currentQuestion,
+      combinedAnswer,
+      difficulty,
+    )
     const nextExam = recordAnswer(topic, exam, capturedAnswer, followUp)
 
     setMainAnswer('')
     setFollowUpAnswer('')
     setActivePart('main')
     setExam(nextExam)
+
+    if (weakAfterFollowUp) {
+      triggerPerilSurge()
+    }
 
     if (nextExam.phase === 'grading') {
       deliverFinalPrompt(currentQuestion, capturedAnswer, followUp)
@@ -731,12 +869,18 @@ export default function App() {
     setIsSpeaking(false)
     setAppError(null)
     setReportTab('scorecard')
+    setIsManualOpen(false)
+    setIsPerilSurging(false)
     setStatusMessage('Awaiting transmission.')
   }
 
+  const basePeril = difficulty === 'survival' ? 48 : difficulty === 'viva' ? 67 : 84
   const planetPeril = report
     ? Math.max(0, Math.round((1 - report.totalScore / report.maxScore) * 100))
-    : 67
+    : Math.min(
+        97,
+        basePeril + exam.completedTurns.length * 7 + (isPerilSurging ? 16 : 0),
+      )
   const threatClass = report
     ? report.totalScore >= 5
       ? 'safe'
@@ -758,6 +902,8 @@ export default function App() {
     : activePart === 'follow-up'
       ? 'Submit follow-up'
       : 'Submit answer'
+  const chamberModeClass = isReportUnlocked ? 'report-mode' : 'exam-mode'
+  const chamberClass = `chamber-shell ${chamberModeClass}${isPerilSurging ? ' peril-surge' : ''}`
 
   return (
     <main className="app-shell">
@@ -797,9 +943,10 @@ export default function App() {
         </section>
       ) : (
         <section
-          className={isReportUnlocked ? 'chamber-shell report-mode' : 'chamber-shell exam-mode'}
+          className={chamberClass}
           aria-label="Quantum Villain Viva"
         >
+        <div className="peril-flash" aria-hidden="true" />
         {!isReportUnlocked ? (
           <section className="exam-stage">
             <aside className="villain-panel" aria-label="Exam signal">
@@ -826,6 +973,24 @@ export default function App() {
               <div className="session-pill" aria-label="Session status">
                 <span>{modeLabel}</span>
                 <strong>{summarizeProgress(topic, exam)}</strong>
+              </div>
+
+              <div className="protocol-panel" aria-label="Difficulty protocol">
+                <span>Protocol</span>
+                <div className="protocol-options" role="group" aria-label="Difficulty">
+                  {DIFFICULTY_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={difficulty === option.id ? 'active' : ''}
+                      onClick={() => handleDifficultyChange(option.id)}
+                      disabled={!canStart}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <small>{selectedDifficulty?.description}</small>
               </div>
             </aside>
 
@@ -1035,6 +1200,75 @@ export default function App() {
         )}
       </section>
       )}
+
+      {hasEnteredChamber && !isReportUnlocked ? (
+        <>
+          {!isManualOpen ? (
+            <button
+              type="button"
+              className="manual-toggle"
+              onClick={handleManualToggle}
+              aria-expanded={isManualOpen}
+            >
+              <BookOpen size={18} />
+              Field manual
+            </button>
+          ) : null}
+
+          {isManualOpen ? (
+            <div className="manual-backdrop" role="presentation">
+              <section
+                className="manual-book"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Stolen field manual"
+              >
+                <header className="manual-header">
+                  <div>
+                    <p className="eyebrow">Contraband quantum notes</p>
+                    <h2>Stolen field manual</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="manual-close"
+                    onClick={() => setIsManualOpen(false)}
+                    aria-label="Close dossier"
+                  >
+                    <X size={18} />
+                  </button>
+                </header>
+
+                <div className="manual-pages">
+                  {topic.questions.map((question, index) => (
+                    <article
+                      key={question.id}
+                      className={index === exam.questionIndex ? 'manual-page current' : 'manual-page'}
+                    >
+                      <div className="manual-page-heading">
+                        <span>Page {index + 1}</span>
+                        <strong>{index === exam.questionIndex ? 'Current threat' : 'Likely threat'}</strong>
+                      </div>
+                      <p>{question.prompt}</p>
+                      <h3>Nocturne wants</h3>
+                      <ul>
+                        {question.expectedConcepts.map((concept) => (
+                          <li key={concept}>{concept}</li>
+                        ))}
+                      </ul>
+                      <h3>Trap</h3>
+                      <p>{question.commonMisconception}</p>
+                      <details>
+                        <summary>Contraband phrase</summary>
+                        <p>{buildManualPhrase(question)}</p>
+                      </details>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </main>
   )
 }
