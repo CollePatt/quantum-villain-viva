@@ -21,7 +21,7 @@ import { getTopicById, topics } from '../src/domain/topics'
 import { buildGradingPrompt, buildVillainInstructions } from '../src/lib/examPrompts'
 
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'
-const DEFAULT_REALTIME_VOICE = 'cedar'
+const DEFAULT_REALTIME_VOICE = 'marin'
 const DEFAULT_GRADER_MODEL = 'gpt-4.1-mini'
 
 type CreateClientSecret = (
@@ -175,7 +175,7 @@ function realtimeSessionParams(
         },
         output: {
           voice: realtimeVoice,
-          speed: 0.93,
+          speed: 0.86,
         },
       },
       reasoning: {

@@ -54,6 +54,13 @@ type TokenResponse = {
 
 type ActiveAnswerPart = 'main' | 'follow-up'
 type ReportTab = 'scorecard' | 'transcript' | 'metrics'
+type RealtimeTransportEvent = {
+  type: string
+  item_id?: string
+  transcript?: string
+  delta?: string
+  error?: unknown
+}
 
 const INTRO_COPY =
   "You are awake, inconveniently, aboard Professor Nocturne's orbital viva chamber. Earth is below. A theatrical device is charging. Answer three quantum questions and the chamber returns you home. Fail, and Nocturne becomes unbearably smug."
@@ -61,7 +68,7 @@ const INTRO_COPY =
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
   realtimeModel: 'gpt-realtime-2.1',
-  realtimeVoice: 'cedar',
+  realtimeVoice: 'marin',
   graderModel: 'local-heuristic',
   openSourceRoadmap: [
     'Ollama local grader',
@@ -169,6 +176,7 @@ export default function App() {
 
   const sessionRef = useRef<RealtimeSession | null>(null)
   const consumedIdsRef = useRef<Set<string>>(new Set())
+  const activePartRef = useRef<ActiveAnswerPart>('main')
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
 
@@ -181,6 +189,10 @@ export default function App() {
     : activePart === 'follow-up'
       ? currentQuestion.followUp
       : currentQuestion.prompt
+
+  useEffect(() => {
+    activePartRef.current = activePart
+  }, [activePart])
 
   useEffect(() => {
     let index = 0
@@ -298,6 +310,50 @@ export default function App() {
       ...current,
       transcriptItems: nextEntries.length,
     }))
+  }
+
+  function appendCapturedTranscript(text: string) {
+    const cleanText = text.trim()
+    if (!cleanText) {
+      return
+    }
+
+    if (activePartRef.current === 'follow-up') {
+      setFollowUpAnswer((current) => appendText(current, cleanText))
+      return
+    }
+
+    setMainAnswer((current) => appendText(current, cleanText))
+  }
+
+  function handleTransportEvent(event: RealtimeTransportEvent) {
+    if (event.type === 'input_audio_buffer.speech_started') {
+      setStatusMessage('Voice detected. Finish your thought, then submit.')
+      return
+    }
+
+    if (event.type === 'input_audio_buffer.speech_stopped') {
+      setStatusMessage('Audio received. Waiting for transcript...')
+      return
+    }
+
+    if (event.type === 'conversation.item.input_audio_transcription.delta') {
+      setStatusMessage('Transcribing your answer...')
+      return
+    }
+
+    if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      if (event.item_id) {
+        consumedIdsRef.current.add(event.item_id)
+      }
+      appendCapturedTranscript(event.transcript ?? '')
+      setStatusMessage('Voice captured. Review or submit your answer.')
+      return
+    }
+
+    if (event.type === 'conversation.item.input_audio_transcription.failed') {
+      setStatusMessage('I heard audio, but transcription failed. Try typing or repeat once.')
+    }
   }
 
   function markPromptLatency() {
@@ -425,7 +481,7 @@ export default function App() {
             },
             output: {
               voice: token.realtimeVoice,
-              speed: 0.93,
+              speed: 0.86,
             },
           },
           reasoning: {
@@ -435,6 +491,7 @@ export default function App() {
       })
 
       session.on('history_updated', updateTranscript)
+      session.on('transport_event', handleTransportEvent)
       session.on('audio_start', () => {
         markPromptLatency()
         setIsSpeaking(true)
@@ -672,7 +729,9 @@ export default function App() {
                   <span />
                 </div>
                 <strong>{isSpeaking ? 'Nocturne speaking' : 'Nocturne waiting'}</strong>
-                <small>{isConnected ? 'Cedar voice active' : 'Local preview voice'}</small>
+                <small>
+                  {isConnected ? `${config?.realtimeVoice ?? 'Realtime'} voice active` : 'Local preview voice'}
+                </small>
               </div>
 
               <div className={`planet-meter ${threatClass}`}>
