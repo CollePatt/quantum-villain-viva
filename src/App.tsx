@@ -2,13 +2,10 @@ import {
   AudioLines,
   BadgeCheck,
   Brain,
-  GitBranch,
-  KeyRound,
   Mic,
   OctagonPause,
   Play,
   Send,
-  ShieldCheck,
   Square,
   TimerReset,
 } from 'lucide-react'
@@ -57,6 +54,7 @@ type TokenResponse = {
 }
 
 type ActiveAnswerPart = 'main' | 'follow-up'
+type AppTab = 'exam' | 'transcript' | 'scorecard' | 'metrics'
 
 function createEmptyMetrics(): ExamMetrics {
   return {
@@ -127,10 +125,13 @@ export default function App() {
   const [activePart, setActivePart] = useState<ActiveAnswerPart>('main')
   const [metrics, setMetrics] = useState<ExamMetrics>(() => createEmptyMetrics())
   const [report, setReport] = useState<ExamReport | null>(null)
-  const [statusMessage, setStatusMessage] = useState('Select a topic to begin.')
+  const [statusMessage, setStatusMessage] = useState(
+    'Choose a topic, then start a three-question viva.',
+  )
   const [isConnected, setIsConnected] = useState(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
   const [appError, setAppError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<AppTab>('exam')
 
   const sessionRef = useRef<RealtimeSession | null>(null)
   const consumedIdsRef = useRef<Set<string>>(new Set())
@@ -173,7 +174,8 @@ export default function App() {
     setIsConnected(false)
     setIsDemoMode(false)
     setAppError(null)
-    setStatusMessage('Topic armed. Begin when ready.')
+    setActiveTab('exam')
+    setStatusMessage('Topic selected.')
     consumedIdsRef.current = new Set()
   }
 
@@ -244,7 +246,8 @@ export default function App() {
     })
     setReport(null)
     setIsDemoMode(true)
-    setStatusMessage('Typed demo mode is active. The live voice path unlocks after .env setup.')
+    setActiveTab('exam')
+    setStatusMessage('Typed mode is active. Enter your response below.')
   }
 
   async function startVoiceExam() {
@@ -270,7 +273,8 @@ export default function App() {
 
     const startingExam = beginExam(createInitialExamState(topic))
     setExam(startingExam)
-    setStatusMessage('Requesting a short-lived Realtime credential...')
+    setActiveTab('exam')
+    setStatusMessage('Starting voice session...')
 
     try {
       const token = await fetchJson<TokenResponse>('/api/realtime-token', {
@@ -392,6 +396,7 @@ export default function App() {
       })
       setReport(nextReport)
       setExam((current) => ({ ...current, phase: 'report' }))
+      setActiveTab('scorecard')
       setStatusMessage('Scorecard ready.')
     } catch (error: unknown) {
       setAppError(normalizeError(error))
@@ -455,6 +460,7 @@ export default function App() {
     setIsConnected(false)
     setIsDemoMode(false)
     setAppError(null)
+    setActiveTab('exam')
     setStatusMessage('Exam reset.')
   }
 
@@ -463,260 +469,286 @@ export default function App() {
   const canAnswer = exam.phase === 'answering'
   const canGradeEarly =
     exam.completedTurns.length > 0 && exam.phase !== 'grading' && exam.phase !== 'report'
-  const setupLabel = config?.hasApiKey ? 'Voice ready' : 'Setup needed'
+  const modeLabel = isConnected
+    ? 'Voice'
+    : isDemoMode
+      ? 'Typed'
+      : config?.hasApiKey
+        ? 'Ready'
+        : 'Preview'
 
   return (
     <main className="app-shell">
-      <section className="exam-panel" aria-label="Quantum Villain Viva exam console">
-        <div className="exam-header">
+      <section className="product-shell" aria-label="Quantum Viva exam console">
+        <header className="topbar">
           <div>
             <p className="eyebrow">Quantum Villain Viva</p>
-            <h1>Professor Nocturne is ready to examine your wavefunction.</h1>
+            <h1>Oral exam simulator</h1>
+            <p className="lede">
+              Three questions, one follow-up per answer, rubric feedback at the end.
+            </p>
           </div>
-          <div className="model-badge" aria-label={setupLabel}>
-            <KeyRound size={18} />
-            <span>{setupLabel}</span>
+          <div className="session-pill" aria-label="Session status">
+            <span>{modeLabel}</span>
+            <strong>{summarizeProgress(topic, exam)}</strong>
           </div>
-        </div>
+        </header>
 
-        <div className="topic-grid" aria-label="Topic selection">
+        <div className="topic-bar" aria-label="Topic selection">
           {topics.map((candidate) => (
             <button
               type="button"
-              className={candidate.id === topic.id ? 'topic-card selected' : 'topic-card'}
+              className={candidate.id === topic.id ? 'topic-chip selected' : 'topic-chip'}
               key={candidate.id}
               onClick={() => resetForTopic(candidate.id)}
             >
               <span>{candidate.shortName}</span>
-              <small>{candidate.premise}</small>
             </button>
           ))}
         </div>
 
-        <div className="question-strip">
-          <div>
-            <span className="label">Current topic</span>
-            <strong>{topic.title}</strong>
-          </div>
-          <div>
-            <span className="label">Progress</span>
-            <strong>{summarizeProgress(topic, exam)}</strong>
-          </div>
-          <div>
-            <span className="label">Mode</span>
-            <strong>{isDemoMode ? 'Typed demo' : isConnected ? 'Live voice' : 'Local ready'}</strong>
-          </div>
-        </div>
-
-        <div className="question-box">
-          <div className="wave-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
-          <p className="label">Examiner prompt</p>
-          <h2>{currentQuestion.prompt}</h2>
-          <p>{currentQuestion.followUp}</p>
-        </div>
-
-        <div className="controls" aria-label="Exam controls">
-          {canStart ? (
-            <>
-              <button type="button" className="primary" onClick={() => void startVoiceExam()}>
-                <Play size={18} />
-                Start exam
-              </button>
-              {!config?.hasApiKey ? (
-                <button type="button" className="secondary" onClick={startDemoExam}>
-                  <Send size={18} />
-                  Typed demo
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="secondary"
-                onClick={askFollowUp}
-                disabled={!canAnswer || !canAskFollowUp(topic, exam)}
-              >
-                <AudioLines size={18} />
-                Ask follow-up
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={saveAnswerAndAdvance}
-                disabled={!canAnswer}
-              >
-                <Send size={18} />
-                Save answer
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Interrupt examiner"
-                title="Interrupt examiner"
-                onClick={interruptExaminer}
-                disabled={!isConnected}
-              >
-                <OctagonPause size={18} />
-              </button>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Reset exam"
-                title="Reset exam"
-                onClick={resetExam}
-              >
-                <Square size={18} />
-              </button>
-            </>
-          )}
-        </div>
-
-        <div className="answer-grid">
-          <label>
-            <span>Main answer</span>
-            <textarea
-              value={mainAnswer}
-              onChange={(event) => setMainAnswer(event.target.value)}
-              placeholder="Speak your answer, or type here for the no-key demo."
-            />
-          </label>
-          <label>
-            <span>Follow-up answer</span>
-            <textarea
-              value={followUpAnswer}
-              onChange={(event) => setFollowUpAnswer(event.target.value)}
-              placeholder="Used only after the single follow-up."
-            />
-          </label>
-        </div>
-
-        <p className="status-line" role="status">
-          {statusMessage}
-        </p>
-        {appError ? <p className="error-line">{appError}</p> : null}
-
-        {canGradeEarly ? (
+        <nav className="view-tabs" aria-label="Exam views">
           <button
             type="button"
-            className="secondary compact"
-            onClick={() => void gradeExam(exam.completedTurns)}
+            className={activeTab === 'exam' ? 'active' : ''}
+            onClick={() => setActiveTab('exam')}
           >
-            End exam and grade
+            <Mic size={16} />
+            Exam
           </button>
-        ) : null}
-      </section>
+          <button
+            type="button"
+            className={activeTab === 'transcript' ? 'active' : ''}
+            onClick={() => setActiveTab('transcript')}
+          >
+            <AudioLines size={16} />
+            Transcript
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'scorecard' ? 'active' : ''}
+            onClick={() => setActiveTab('scorecard')}
+          >
+            <BadgeCheck size={16} />
+            Scorecard
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'metrics' ? 'active' : ''}
+            onClick={() => setActiveTab('metrics')}
+          >
+            <TimerReset size={16} />
+            Metrics
+          </button>
+        </nav>
 
-      <aside className="side-panel">
-        <section className="setup-panel">
-          <div className="panel-title">
-            <ShieldCheck size={18} />
-            <h2>Setup status</h2>
-          </div>
-          <p>
-            {config?.hasApiKey
-              ? `Realtime is configured with ${config.realtimeModel} and voice ${config.realtimeVoice}.`
-              : 'Add OPENAI_API_KEY to .env to enable the microphone path. Until then, typed demo mode and the local grader still run.'}
-          </p>
-          <div className="setup-list">
-            <span>
-              <Mic size={16} />
-              Browser voice via Realtime
-            </span>
-            <span>
-              <Brain size={16} />
-              Deterministic exam state
-            </span>
-            <span>
-              <GitBranch size={16} />
-              Private GitHub-ready repo
-            </span>
-          </div>
-          {config?.openSourceRoadmap.length ? (
-            <div className="roadmap">
-              <span>Open-source path</span>
-              <ol>
-                {config.openSourceRoadmap.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ol>
+        <section className="tab-panel">
+          {activeTab === 'exam' ? (
+            <div className="exam-view">
+              <div className="question-card">
+                <div className="question-meta">
+                  <span>{topic.title}</span>
+                  <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
+                </div>
+                <h2>{currentQuestion.prompt}</h2>
+                <p>{currentQuestion.followUp}</p>
+              </div>
+
+              <div className="controls" aria-label="Exam controls">
+                {canStart ? (
+                  <>
+                    <button type="button" className="primary" onClick={() => void startVoiceExam()}>
+                      <Play size={18} />
+                      Start exam
+                    </button>
+                    {!config?.hasApiKey ? (
+                      <button type="button" className="secondary" onClick={startDemoExam}>
+                        <Send size={18} />
+                        Start typed
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={askFollowUp}
+                      disabled={!canAnswer || !canAskFollowUp(topic, exam)}
+                    >
+                      <AudioLines size={18} />
+                      Ask follow-up
+                    </button>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={saveAnswerAndAdvance}
+                      disabled={!canAnswer}
+                    >
+                      <Send size={18} />
+                      Save answer
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label="Interrupt examiner"
+                      title="Interrupt examiner"
+                      onClick={interruptExaminer}
+                      disabled={!isConnected}
+                    >
+                      <OctagonPause size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label="Reset exam"
+                      title="Reset exam"
+                      onClick={resetExam}
+                    >
+                      <Square size={18} />
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="answer-grid">
+                <label>
+                  <span>Main answer</span>
+                  <textarea
+                    value={mainAnswer}
+                    onChange={(event) => setMainAnswer(event.target.value)}
+                    placeholder="Speak or type your response."
+                  />
+                </label>
+                <label>
+                  <span>Follow-up answer</span>
+                  <textarea
+                    value={followUpAnswer}
+                    onChange={(event) => setFollowUpAnswer(event.target.value)}
+                    placeholder="Use this after the follow-up prompt."
+                  />
+                </label>
+              </div>
+
+              <div className="footer-row">
+                <p className="status-line" role="status">
+                  {statusMessage}
+                </p>
+                {canGradeEarly ? (
+                  <button
+                    type="button"
+                    className="secondary compact"
+                    onClick={() => void gradeExam(exam.completedTurns)}
+                  >
+                    End and grade
+                  </button>
+                ) : null}
+              </div>
+              {appError ? <p className="error-line">{appError}</p> : null}
+            </div>
+          ) : null}
+
+          {activeTab === 'transcript' ? (
+            <div className="transcript-view">
+              {entries.length === 0 ? (
+                <p className="empty-state">Transcript lines appear here during a voice session.</p>
+              ) : (
+                <ol>
+                  {entries.map((entry) => (
+                    <li key={entry.id} className={entry.role}>
+                      <span>{entry.role}</span>
+                      <p>{entry.text}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          ) : null}
+
+          {activeTab === 'scorecard' ? (
+            <div className="scorecard-view">
+              {report ? (
+                <>
+                  <div className="score">
+                    <strong>
+                      {report.totalScore}/{report.maxScore}
+                    </strong>
+                    <span>
+                      {report.source === 'openai' ? 'Rubric grade' : 'Local heuristic grade'}
+                    </span>
+                  </div>
+                  <p>{report.summary}</p>
+                  <div className="grade-list">
+                    {report.perQuestion.map((grade, index) => (
+                      <article key={grade.questionId}>
+                        <div>
+                          <span>Q{index + 1}</span>
+                          <strong>
+                            {grade.score}/{grade.maxScore}
+                          </strong>
+                        </div>
+                        <p>{grade.feedback}</p>
+                      </article>
+                    ))}
+                  </div>
+                  <h3>Review next</h3>
+                  <ul>
+                    {report.reviewSuggestions.map((suggestion) => (
+                      <li key={suggestion}>{suggestion}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="empty-state">Complete at least one answer, then grade the session.</p>
+              )}
+            </div>
+          ) : null}
+
+          {activeTab === 'metrics' ? (
+            <div className="metrics-view">
+              <dl>
+                <div>
+                  <dt>Duration</dt>
+                  <dd>{formatDuration(metrics.durationMs)}</dd>
+                </div>
+                <div>
+                  <dt>First response</dt>
+                  <dd>
+                    {metrics.firstResponseLatencyMs === null
+                      ? 'Not observed'
+                      : formatDuration(metrics.firstResponseLatencyMs)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Interruptions</dt>
+                  <dd>{metrics.interruptions}</dd>
+                </div>
+                <div>
+                  <dt>Transcript items</dt>
+                  <dd>{metrics.transcriptItems}</dd>
+                </div>
+              </dl>
+              <div className="method-note">
+                <Brain size={18} />
+                <p>
+                  Exam order is handled in app state. The voice model asks only the
+                  current prompt; grading runs separately against the rubric.
+                </p>
+              </div>
+              {config?.openSourceRoadmap.length ? (
+                <div className="roadmap">
+                  <span>Open-source path</span>
+                  <ol>
+                    {config.openSourceRoadmap.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </section>
-
-        <section className="metrics-panel">
-          <div className="panel-title">
-            <TimerReset size={18} />
-            <h2>Demo metrics</h2>
-          </div>
-          <dl>
-            <div>
-              <dt>Duration</dt>
-              <dd>{formatDuration(metrics.durationMs)}</dd>
-            </div>
-            <div>
-              <dt>First response</dt>
-              <dd>
-                {metrics.firstResponseLatencyMs === null
-                  ? 'Not observed'
-                  : formatDuration(metrics.firstResponseLatencyMs)}
-              </dd>
-            </div>
-            <div>
-              <dt>Interruptions</dt>
-              <dd>{metrics.interruptions}</dd>
-            </div>
-            <div>
-              <dt>Transcript items</dt>
-              <dd>{metrics.transcriptItems}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="transcript-panel">
-          <div className="panel-title">
-            <AudioLines size={18} />
-            <h2>Transcript</h2>
-          </div>
-          {entries.length === 0 ? (
-            <p className="empty-state">Voice transcript appears here after a live session starts.</p>
-          ) : (
-            <ol>
-              {entries.map((entry) => (
-                <li key={entry.id} className={entry.role}>
-                  <span>{entry.role}</span>
-                  <p>{entry.text}</p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-
-        {report ? (
-          <section className="report-panel">
-            <div className="panel-title">
-              <BadgeCheck size={18} />
-              <h2>Scorecard</h2>
-            </div>
-            <div className="score">
-              <strong>
-                {report.totalScore}/{report.maxScore}
-              </strong>
-              <span>{report.source === 'openai' ? 'OpenAI rubric grade' : 'Local heuristic grade'}</span>
-            </div>
-            <p>{report.summary}</p>
-            <ul>
-              {report.reviewSuggestions.map((suggestion) => (
-                <li key={suggestion}>{suggestion}</li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-      </aside>
+      </section>
     </main>
   )
 }

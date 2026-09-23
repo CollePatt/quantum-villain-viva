@@ -30,17 +30,19 @@ afterEach(() => {
 })
 
 describe('App smoke test', () => {
-  it('shows the setup state and supports typed demo flow', async () => {
+  it('shows the public exam shell and supports typed demo flow', async () => {
     const user = userEvent.setup()
     render(<App />)
 
-    expect(await screen.findByText('Setup needed')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Typed demo/i })).toBeInTheDocument()
+    expect(await screen.findByText('Oral exam simulator')).toBeInTheDocument()
+    expect(screen.queryByText(/Setup status/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Start typed/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Transcript/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Measurement/i }))
     await user.click(screen.getByRole('button', { name: /Start exam/i }))
 
-    expect(await screen.findByText(/Typed demo mode is active/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Typed mode is active/i)).toBeInTheDocument()
     expect(screen.getByText(/What does it mean to measure an observable/i)).toBeInTheDocument()
   })
 })
