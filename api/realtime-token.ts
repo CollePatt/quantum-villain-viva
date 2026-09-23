@@ -1,3 +1,1 @@
-import { createApp } from '../server/app'
-
-export default createApp()
+export { default } from '../server/vercel'
