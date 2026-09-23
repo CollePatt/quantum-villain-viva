@@ -4,6 +4,7 @@
   min-height: 100vh;
   padding: 24px;
   color: #f1e8d6;
+  font-variant-numeric: tabular-nums;
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -94,7 +95,9 @@
 .intro-terminal h1 {
   margin-bottom: 18px;
   font-size: 3rem;
+  font-weight: 900;
   text-transform: uppercase;
+  text-shadow: 0 0 18px rgba(255, 246, 232, 0.16);
 }
 
 .intro-copy {
@@ -103,6 +106,7 @@
   color: #d7dfdc;
   font-size: 1.16rem;
   line-height: 1.65;
+  text-shadow: 0 0 12px rgba(96, 211, 207, 0.12);
 }
 
 .intro-footer {
@@ -235,14 +239,17 @@ h1 {
   margin-bottom: 10px;
   color: #fff6e8;
   font-size: 2.28rem;
+  font-weight: 900;
   line-height: 1.04;
   letter-spacing: 0;
+  text-shadow: 0 0 18px rgba(255, 246, 232, 0.16);
 }
 
 h2 {
   margin-bottom: 10px;
   color: #fff6e8;
   font-size: 1.36rem;
+  font-weight: 850;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -299,6 +306,7 @@ button {
   padding: 0 15px;
   color: inherit;
   font-weight: 800;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
@@ -507,6 +515,7 @@ dl div {
   padding: 0 12px;
   color: #fff6e8;
   background: rgba(8, 23, 25, 0.92);
+  font-weight: 800;
   cursor: pointer;
 }
 
@@ -585,6 +594,7 @@ dl div {
   color: #fff6e8;
   font-size: 1.58rem;
   line-height: 1.32;
+  text-shadow: 0 0 16px rgba(96, 211, 207, 0.1);
 }
 
 .cursor {
@@ -617,6 +627,7 @@ textarea {
   background: rgba(2, 6, 7, 0.72);
   line-height: 1.5;
   text-transform: none;
+  caret-color: #d3aa48;
 }
 
 textarea::placeholder {

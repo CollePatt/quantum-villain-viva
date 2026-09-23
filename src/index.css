@@ -1,7 +1,7 @@
 :root {
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
+    "Liberation Mono", "Courier New", monospace;
   color: #f5f1e8;
   background: #151313;
   font-synthesis: none;
