@@ -16,7 +16,7 @@ beforeEach(() => {
     json: async () => ({
       hasApiKey: false,
       realtimeModel: 'gpt-realtime-2.1',
-      realtimeVoice: 'marin',
+      realtimeVoice: 'cedar',
       graderModel: 'gpt-5.6-luna',
       openSourceRoadmap: ['Ollama local grader'],
     }),

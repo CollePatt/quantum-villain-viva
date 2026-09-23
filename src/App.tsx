@@ -70,7 +70,7 @@ const INTRO_COPY =
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
   realtimeModel: 'gpt-realtime-2.1',
-  realtimeVoice: 'marin',
+  realtimeVoice: 'cedar',
   graderModel: 'local-heuristic',
   openSourceRoadmap: [
     'Ollama local grader',
