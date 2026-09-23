@@ -2,7 +2,7 @@
 
 A browser-based quantum mechanics oral examiner with a theatrical villain persona, deterministic exam flow, rubric grading, and voice-agent demo metrics.
 
-The first version is intentionally narrow: choose one of five topics, answer three spoken questions, allow at most one follow-up per answer, then generate a scorecard with correct ideas, missing ideas, and measured behavior.
+The first version is intentionally narrow: choose one of five topics, answer three spoken questions, allow at most one follow-up per answer, then unlock a tabbed report with correct ideas, missing ideas, transcript, and measured behavior.
 
 ## What it demonstrates
 
@@ -10,6 +10,7 @@ The first version is intentionally narrow: choose one of five topics, answer thr
 - Server-side API-key protection through short-lived Realtime client secrets.
 - A deterministic exam state machine rather than asking the model to manage the whole session.
 - Rubric-based grading through `POST /api/grade-exam`, with a local heuristic fallback when no key is configured.
+- An immersive exam surface: one topic dropdown, one primary action, live question reveal, and a villain speaking indicator.
 - Metrics for a short demo: duration, first-response latency, interruption count, and transcript item count.
 
 ## Quick start
@@ -20,9 +21,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+Open the Vite URL printed in the terminal, usually `http://127.0.0.1:5173`.
 
-Without an OpenAI key, the app still runs in typed demo mode and uses the local heuristic grader. Live microphone mode turns on after `OPENAI_API_KEY` is set in `.env`.
+Without an OpenAI key, the app still runs in local preview mode, reads the fixed questions with browser speech, and uses the local heuristic grader. Live microphone mode turns on after `OPENAI_API_KEY` is set in `.env`.
 
 ## OpenAI setup
 
@@ -40,7 +41,7 @@ Keep `.env` private. The browser never receives this permanent key; it only rece
 
 ## Voice strategy
 
-V1 does not train a custom voice. The villain behavior is implemented through product design, prompt instructions, concise turns, and the built-in `cedar` voice. That keeps the project small enough for a fast demo while still showing voice-AI architecture knowledge.
+V1 does not train a custom voice. The villain behavior is implemented through product design, prompt instructions, concise turns, and the built-in `cedar` voice. The same fixed questions are read aloud in local preview mode with browser speech, so the demo still works before credentials exist.
 
 Custom voice training is deliberately left out because it requires extra consent, samples, review, and product eligibility work that would not fit the MVP deadline.
 
@@ -56,7 +57,7 @@ Each topic has three fixed questions, expected concepts, a common misconception,
 
 ## API routes
 
-- `GET /api/config` returns setup status, selected models, voice, and topic metadata.
+- `GET /api/config` returns credential availability, selected models, voice, and topic metadata.
 - `POST /api/realtime-token` returns a short-lived Realtime client secret for the chosen topic.
 - `POST /api/grade-exam` returns a structured scorecard. It uses OpenAI when configured and local heuristic grading otherwise.
 
@@ -79,5 +80,5 @@ npm run build
 1. Start with tunneling.
 2. Give one answer that mentions exponential decay and nonzero amplitude past the barrier.
 3. Give one plausible wrong answer, such as "the particle borrows energy."
-4. Use the interrupt button while the examiner is speaking.
-5. End the exam and show the scorecard plus metrics.
+4. Use the silence button while the examiner is speaking.
+5. After the third answer, show the scorecard, transcript tab, and metrics tab.

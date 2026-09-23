@@ -2,7 +2,6 @@ import {
   AudioLines,
   BadgeCheck,
   Brain,
-  Mic,
   OctagonPause,
   Play,
   Send,
@@ -15,7 +14,6 @@ import type { RealtimeItem } from '@openai/agents/realtime'
 import './App.css'
 import {
   beginExam,
-  canAskFollowUp,
   createInitialExamState,
   getCurrentQuestion,
   markAsking,
@@ -25,7 +23,7 @@ import {
   summarizeProgress,
   type ExamState,
 } from './domain/examState'
-import type { ExamMetrics, ExamReport, ExamTurn, TopicId } from './domain/schemas'
+import type { ExamMetrics, ExamReport, ExamTurn, Question, TopicId } from './domain/schemas'
 import { getTopicById, topics } from './domain/topics'
 import {
   buildFollowUpPrompt,
@@ -54,7 +52,7 @@ type TokenResponse = {
 }
 
 type ActiveAnswerPart = 'main' | 'follow-up'
-type AppTab = 'exam' | 'transcript' | 'scorecard' | 'metrics'
+type ReportTab = 'scorecard' | 'transcript' | 'metrics'
 
 function createEmptyMetrics(): ExamMetrics {
   return {
@@ -114,6 +112,18 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function shouldDemandClarification(answer: string): boolean {
+  const normalized = answer.trim().toLowerCase()
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length
+  return (
+    wordCount < 12 ||
+    normalized.includes("don't know") ||
+    normalized.includes('do not know') ||
+    normalized.includes('idk') ||
+    normalized.includes('not sure')
+  )
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [topicId, setTopicId] = useState<TopicId>('tunneling')
@@ -125,18 +135,43 @@ export default function App() {
   const [activePart, setActivePart] = useState<ActiveAnswerPart>('main')
   const [metrics, setMetrics] = useState<ExamMetrics>(() => createEmptyMetrics())
   const [report, setReport] = useState<ExamReport | null>(null)
-  const [statusMessage, setStatusMessage] = useState(
-    'Choose a topic, then start a three-question viva.',
-  )
+  const [statusMessage, setStatusMessage] = useState('Awaiting transmission.')
   const [isConnected, setIsConnected] = useState(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
   const [appError, setAppError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<AppTab>('exam')
+  const [reportTab, setReportTab] = useState<ReportTab>('scorecard')
+  const [displayPrompt, setDisplayPrompt] = useState('Select a topic and begin.')
 
   const sessionRef = useRef<RealtimeSession | null>(null)
   const consumedIdsRef = useRef<Set<string>>(new Set())
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
+
+  const currentQuestion = getCurrentQuestion(topic, exam)
+  const canStart = exam.phase === 'idle' || exam.phase === 'report' || exam.phase === 'error'
+  const canAnswer = exam.phase === 'answering'
+  const isReportUnlocked = exam.phase === 'report'
+  const promptText = canStart
+    ? 'Select a topic and begin the transmission.'
+    : activePart === 'follow-up'
+      ? currentQuestion.followUp
+      : currentQuestion.prompt
+
+  useEffect(() => {
+    let index = 0
+
+    const interval = window.setInterval(() => {
+      index += 1
+      setDisplayPrompt(promptText.slice(0, index))
+
+      if (index >= promptText.length) {
+        window.clearInterval(interval)
+      }
+    }, 12)
+
+    return () => window.clearInterval(interval)
+  }, [promptText])
 
   useEffect(() => {
     let isMounted = true
@@ -156,11 +191,46 @@ export default function App() {
     return () => {
       isMounted = false
       sessionRef.current?.close()
+      window.speechSynthesis?.cancel()
     }
   }, [])
 
+  function speakLocally(text: string) {
+    if (
+      typeof window === 'undefined' ||
+      !window.speechSynthesis ||
+      typeof window.SpeechSynthesisUtterance === 'undefined'
+    ) {
+      return
+    }
+
+    window.speechSynthesis.cancel()
+    const utterance = new window.SpeechSynthesisUtterance(text)
+    utterance.rate = 0.86
+    utterance.pitch = 0.55
+    utterance.volume = 0.9
+    utterance.onstart = () => setIsSpeaking(true)
+    utterance.onend = () => setIsSpeaking(false)
+    utterance.onerror = () => setIsSpeaking(false)
+    window.speechSynthesis.speak(utterance)
+  }
+
+  function deliverPrompt(question: Question, position: number, kind: ActiveAnswerPart) {
+    const text = kind === 'follow-up' ? question.followUp : question.prompt
+
+    if (isConnected && !isDemoMode) {
+      sendVoicePrompt(
+        kind === 'follow-up' ? buildFollowUpPrompt(question) : buildQuestionPrompt(question, position),
+      )
+      return
+    }
+
+    speakLocally(text)
+  }
+
   function resetForTopic(nextTopicId: TopicId) {
     sessionRef.current?.close()
+    window.speechSynthesis?.cancel()
     sessionRef.current = null
     const nextTopic = getTopicById(nextTopicId)
     setTopicId(nextTopicId)
@@ -173,9 +243,10 @@ export default function App() {
     setReport(null)
     setIsConnected(false)
     setIsDemoMode(false)
+    setIsSpeaking(false)
     setAppError(null)
-    setActiveTab('exam')
-    setStatusMessage('Topic selected.')
+    setReportTab('scorecard')
+    setStatusMessage('Topic selected. The chamber is listening.')
     consumedIdsRef.current = new Set()
   }
 
@@ -246,8 +317,10 @@ export default function App() {
     })
     setReport(null)
     setIsDemoMode(true)
-    setActiveTab('exam')
-    setStatusMessage('Typed mode is active. Enter your response below.')
+    setIsSpeaking(false)
+    setReportTab('scorecard')
+    setStatusMessage('Question 1 transmitted. Answer to proceed.')
+    speakLocally(topic.questions[0].prompt)
   }
 
   async function startVoiceExam() {
@@ -257,6 +330,7 @@ export default function App() {
     setMainAnswer('')
     setFollowUpAnswer('')
     setActivePart('main')
+    setIsSpeaking(false)
     consumedIdsRef.current = new Set()
 
     if (!config?.hasApiKey) {
@@ -273,8 +347,7 @@ export default function App() {
 
     const startingExam = beginExam(createInitialExamState(topic))
     setExam(startingExam)
-    setActiveTab('exam')
-    setStatusMessage('Starting voice session...')
+    setStatusMessage('Opening the voice channel...')
 
     try {
       const token = await fetchJson<TokenResponse>('/api/realtime-token', {
@@ -321,8 +394,15 @@ export default function App() {
       })
 
       session.on('history_updated', updateTranscript)
-      session.on('audio_start', markPromptLatency)
+      session.on('audio_start', () => {
+        markPromptLatency()
+        setIsSpeaking(true)
+      })
+      session.on('audio_stopped', () => {
+        setIsSpeaking(false)
+      })
       session.on('audio_interrupted', () => {
+        setIsSpeaking(false)
         setMetrics((current) => ({
           ...current,
           interruptions: current.interruptions + 1,
@@ -335,7 +415,7 @@ export default function App() {
       sessionRef.current = session
       await session.connect({ apiKey: token.clientSecret, model: token.realtimeModel })
       setIsConnected(true)
-      setStatusMessage('Connected. The examiner is speaking.')
+      setStatusMessage('Question 1 transmitted. Answer to proceed.')
 
       const askingExam = markQuestionAsked(markAsking(startingExam))
       setExam(askingExam)
@@ -343,29 +423,9 @@ export default function App() {
     } catch (error: unknown) {
       setExam(createInitialExamState(topic))
       setIsConnected(false)
+      setIsSpeaking(false)
       setAppError(normalizeError(error))
-      setStatusMessage('Voice connection failed. Typed demo mode is still available.')
-    }
-  }
-
-  function askFollowUp() {
-    if (!canAskFollowUp(topic, exam)) {
-      return
-    }
-
-    const speech = takeFreshSpeech()
-    if (speech) {
-      setMainAnswer((current) => appendText(current, speech))
-    }
-
-    const nextExam = recordFollowUp(topic, exam)
-    const question = getCurrentQuestion(topic, nextExam)
-    setExam(nextExam)
-    setActivePart('follow-up')
-    setStatusMessage('One follow-up has been used for this answer.')
-
-    if (!isDemoMode) {
-      sendVoicePrompt(buildFollowUpPrompt(question))
+      setStatusMessage('Voice failed. Local preview remains available.')
     }
   }
 
@@ -383,7 +443,7 @@ export default function App() {
     }
 
     setMetrics(finalMetrics)
-    setStatusMessage('Generating the scorecard...')
+    setStatusMessage('Calculating planetary consequences...')
 
     try {
       const nextReport = await fetchJson<ExamReport>('/api/grade-exam', {
@@ -396,24 +456,45 @@ export default function App() {
       })
       setReport(nextReport)
       setExam((current) => ({ ...current, phase: 'report' }))
-      setActiveTab('scorecard')
-      setStatusMessage('Scorecard ready.')
+      setReportTab('scorecard')
+      setStatusMessage('Report unlocked.')
     } catch (error: unknown) {
       setAppError(normalizeError(error))
       setStatusMessage('Could not grade the exam.')
     }
   }
 
-  function saveAnswerAndAdvance() {
+  function submitAnswer() {
+    if (!canAnswer) {
+      return
+    }
+
     const freshSpeech = takeFreshSpeech()
-    const nextMain =
-      activePart === 'main' ? appendText(mainAnswer, freshSpeech) : mainAnswer.trim()
-    const nextFollowUp =
-      activePart === 'follow-up'
-        ? appendText(followUpAnswer, freshSpeech)
-        : followUpAnswer.trim()
-    const capturedAnswer = nextMain || 'No answer captured.'
-    const nextExam = recordAnswer(topic, exam, capturedAnswer, nextFollowUp)
+
+    if (activePart === 'main') {
+      const answer = appendText(mainAnswer, freshSpeech)
+
+      if (shouldDemandClarification(answer) && !exam.followUpsUsed[currentQuestion.id]) {
+        const nextExam = recordFollowUp(topic, exam)
+        setExam(nextExam)
+        setMainAnswer(answer)
+        setFollowUpAnswer('')
+        setActivePart('follow-up')
+        setStatusMessage('Nocturne demands one clarification.')
+        deliverPrompt(currentQuestion, exam.questionIndex + 1, 'follow-up')
+        return
+      }
+
+      completeTurn(answer, '')
+      return
+    }
+
+    completeTurn(mainAnswer, appendText(followUpAnswer, freshSpeech))
+  }
+
+  function completeTurn(answer: string, followUp: string) {
+    const capturedAnswer = answer.trim() || 'No answer captured.'
+    const nextExam = recordAnswer(topic, exam, capturedAnswer, followUp)
 
     setMainAnswer('')
     setFollowUpAnswer('')
@@ -429,15 +510,14 @@ export default function App() {
     const nextQuestionNumber = nextExam.questionIndex + 1
     const askingExam = markQuestionAsked(nextExam)
     setExam(askingExam)
-    setStatusMessage(`Question ${nextQuestionNumber} of ${topic.questions.length}.`)
-
-    if (!isDemoMode) {
-      sendVoicePrompt(buildQuestionPrompt(nextQuestion, nextQuestionNumber))
-    }
+    setStatusMessage(`Question ${nextQuestionNumber} transmitted. Answer to proceed.`)
+    deliverPrompt(nextQuestion, nextQuestionNumber, 'main')
   }
 
   function interruptExaminer() {
     sessionRef.current?.interrupt()
+    window.speechSynthesis?.cancel()
+    setIsSpeaking(false)
     setMetrics((current) => ({
       ...current,
       interruptions: current.interruptions + 1,
@@ -446,6 +526,7 @@ export default function App() {
 
   function resetExam() {
     sessionRef.current?.close()
+    window.speechSynthesis?.cancel()
     sessionRef.current = null
     sessionStartedAtRef.current = null
     pendingPromptStartedAtRef.current = null
@@ -459,33 +540,47 @@ export default function App() {
     setReport(null)
     setIsConnected(false)
     setIsDemoMode(false)
+    setIsSpeaking(false)
     setAppError(null)
-    setActiveTab('exam')
-    setStatusMessage('Exam reset.')
+    setReportTab('scorecard')
+    setStatusMessage('Awaiting transmission.')
   }
 
-  const currentQuestion = getCurrentQuestion(topic, exam)
-  const canStart = exam.phase === 'idle' || exam.phase === 'report' || exam.phase === 'error'
-  const canAnswer = exam.phase === 'answering'
-  const canGradeEarly =
-    exam.completedTurns.length > 0 && exam.phase !== 'grading' && exam.phase !== 'report'
+  const planetPeril = report
+    ? Math.max(0, Math.round((1 - report.totalScore / report.maxScore) * 100))
+    : 67
+  const threatClass = report
+    ? report.totalScore >= 5
+      ? 'safe'
+      : report.totalScore >= 3
+        ? 'warning'
+        : 'danger'
+    : 'warning'
   const modeLabel = isConnected
-    ? 'Voice'
+    ? 'Voice link'
     : isDemoMode
-      ? 'Typed'
+      ? 'Local voice'
       : config?.hasApiKey
         ? 'Ready'
         : 'Preview'
+  const primaryLabel = canStart
+    ? isReportUnlocked
+      ? 'Run another exam'
+      : 'Begin transmission'
+    : activePart === 'follow-up'
+      ? 'Submit follow-up'
+      : 'Submit answer'
 
   return (
     <main className="app-shell">
-      <section className="product-shell" aria-label="Quantum Viva exam console">
+      <section className="chamber-shell" aria-label="Quantum Villain Viva">
         <header className="topbar">
           <div>
             <p className="eyebrow">Quantum Villain Viva</p>
-            <h1>Oral exam simulator</h1>
+            <h1>Escape Professor Nocturne's orbital viva chamber.</h1>
             <p className="lede">
-              Three questions, one follow-up per answer, rubric feedback at the end.
+              Survive three quantum questions and the chamber returns you home. Miss
+              badly, and the fictional planet vaporizer gets dramatic.
             </p>
           </div>
           <div className="session-pill" aria-label="Session status">
@@ -494,260 +589,239 @@ export default function App() {
           </div>
         </header>
 
-        <div className="topic-bar" aria-label="Topic selection">
-          {topics.map((candidate) => (
-            <button
-              type="button"
-              className={candidate.id === topic.id ? 'topic-chip selected' : 'topic-chip'}
-              key={candidate.id}
-              onClick={() => resetForTopic(candidate.id)}
-            >
-              <span>{candidate.shortName}</span>
-            </button>
-          ))}
-        </div>
-
-        <nav className="view-tabs" aria-label="Exam views">
-          <button
-            type="button"
-            className={activeTab === 'exam' ? 'active' : ''}
-            onClick={() => setActiveTab('exam')}
-          >
-            <Mic size={16} />
-            Exam
-          </button>
-          <button
-            type="button"
-            className={activeTab === 'transcript' ? 'active' : ''}
-            onClick={() => setActiveTab('transcript')}
-          >
-            <AudioLines size={16} />
-            Transcript
-          </button>
-          <button
-            type="button"
-            className={activeTab === 'scorecard' ? 'active' : ''}
-            onClick={() => setActiveTab('scorecard')}
-          >
-            <BadgeCheck size={16} />
-            Scorecard
-          </button>
-          <button
-            type="button"
-            className={activeTab === 'metrics' ? 'active' : ''}
-            onClick={() => setActiveTab('metrics')}
-          >
-            <TimerReset size={16} />
-            Metrics
-          </button>
-        </nav>
-
-        <section className="tab-panel">
-          {activeTab === 'exam' ? (
-            <div className="exam-view">
-              <div className="question-card">
-                <div className="question-meta">
-                  <span>{topic.title}</span>
-                  <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
-                </div>
-                <h2>{currentQuestion.prompt}</h2>
-                <p>{currentQuestion.followUp}</p>
-              </div>
-
-              <div className="controls" aria-label="Exam controls">
-                {canStart ? (
-                  <>
-                    <button type="button" className="primary" onClick={() => void startVoiceExam()}>
-                      <Play size={18} />
-                      Start exam
-                    </button>
-                    {!config?.hasApiKey ? (
-                      <button type="button" className="secondary" onClick={startDemoExam}>
-                        <Send size={18} />
-                        Start typed
-                      </button>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={askFollowUp}
-                      disabled={!canAnswer || !canAskFollowUp(topic, exam)}
-                    >
-                      <AudioLines size={18} />
-                      Ask follow-up
-                    </button>
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={saveAnswerAndAdvance}
-                      disabled={!canAnswer}
-                    >
-                      <Send size={18} />
-                      Save answer
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label="Interrupt examiner"
-                      title="Interrupt examiner"
-                      onClick={interruptExaminer}
-                      disabled={!isConnected}
-                    >
-                      <OctagonPause size={18} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label="Reset exam"
-                      title="Reset exam"
-                      onClick={resetExam}
-                    >
-                      <Square size={18} />
-                    </button>
-                  </>
-                )}
-              </div>
-
-              <div className="answer-grid">
-                <label>
-                  <span>Main answer</span>
-                  <textarea
-                    value={mainAnswer}
-                    onChange={(event) => setMainAnswer(event.target.value)}
-                    placeholder="Speak or type your response."
-                  />
-                </label>
-                <label>
-                  <span>Follow-up answer</span>
-                  <textarea
-                    value={followUpAnswer}
-                    onChange={(event) => setFollowUpAnswer(event.target.value)}
-                    placeholder="Use this after the follow-up prompt."
-                  />
-                </label>
-              </div>
-
-              <div className="footer-row">
-                <p className="status-line" role="status">
-                  {statusMessage}
-                </p>
-                {canGradeEarly ? (
-                  <button
-                    type="button"
-                    className="secondary compact"
-                    onClick={() => void gradeExam(exam.completedTurns)}
-                  >
-                    End and grade
-                  </button>
-                ) : null}
-              </div>
-              {appError ? <p className="error-line">{appError}</p> : null}
-            </div>
-          ) : null}
-
-          {activeTab === 'transcript' ? (
-            <div className="transcript-view">
-              {entries.length === 0 ? (
-                <p className="empty-state">Transcript lines appear here during a voice session.</p>
-              ) : (
-                <ol>
-                  {entries.map((entry) => (
-                    <li key={entry.id} className={entry.role}>
-                      <span>{entry.role}</span>
-                      <p>{entry.text}</p>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
-          ) : null}
-
-          {activeTab === 'scorecard' ? (
-            <div className="scorecard-view">
-              {report ? (
-                <>
-                  <div className="score">
-                    <strong>
-                      {report.totalScore}/{report.maxScore}
-                    </strong>
-                    <span>
-                      {report.source === 'openai' ? 'Rubric grade' : 'Local heuristic grade'}
-                    </span>
-                  </div>
-                  <p>{report.summary}</p>
-                  <div className="grade-list">
-                    {report.perQuestion.map((grade, index) => (
-                      <article key={grade.questionId}>
-                        <div>
-                          <span>Q{index + 1}</span>
-                          <strong>
-                            {grade.score}/{grade.maxScore}
-                          </strong>
-                        </div>
-                        <p>{grade.feedback}</p>
-                      </article>
-                    ))}
-                  </div>
-                  <h3>Review next</h3>
-                  <ul>
-                    {report.reviewSuggestions.map((suggestion) => (
-                      <li key={suggestion}>{suggestion}</li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <p className="empty-state">Complete at least one answer, then grade the session.</p>
-              )}
-            </div>
-          ) : null}
-
-          {activeTab === 'metrics' ? (
-            <div className="metrics-view">
-              <dl>
-                <div>
-                  <dt>Duration</dt>
-                  <dd>{formatDuration(metrics.durationMs)}</dd>
-                </div>
-                <div>
-                  <dt>First response</dt>
-                  <dd>
-                    {metrics.firstResponseLatencyMs === null
-                      ? 'Not observed'
-                      : formatDuration(metrics.firstResponseLatencyMs)}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Interruptions</dt>
-                  <dd>{metrics.interruptions}</dd>
-                </div>
-                <div>
-                  <dt>Transcript items</dt>
-                  <dd>{metrics.transcriptItems}</dd>
-                </div>
-              </dl>
-              <div className="method-note">
-                <Brain size={18} />
+        {!isReportUnlocked ? (
+          <section className="exam-stage">
+            <div className="story-card">
+              <div>
+                <p className="eyebrow">Transmission received</p>
+                <h2>You wake inside a moving exam chamber.</h2>
                 <p>
-                  Exam order is handled in app state. The voice model asks only the
-                  current prompt; grading runs separately against the rubric.
+                  Nocturne offers a bargain: answer three questions, receive a report,
+                  and go home. The rubric is fair. His attitude is not.
                 </p>
               </div>
-              {config?.openSourceRoadmap.length ? (
-                <div className="roadmap">
-                  <span>Open-source path</span>
-                  <ol>
-                    {config.openSourceRoadmap.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ol>
+              <div className={isSpeaking ? 'villain-signal speaking' : 'villain-signal'}>
+                <div className="voice-orb" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
                 </div>
+                <strong>{isSpeaking ? 'Nocturne speaking' : 'Nocturne waiting'}</strong>
+                <small>{isConnected ? 'Cedar voice active' : 'Local preview voice'}</small>
+              </div>
+            </div>
+
+            <div className="exam-toolbar">
+              <label className="topic-select">
+                <span>Topic</span>
+                <select
+                  value={topic.id}
+                  onChange={(event) => resetForTopic(event.target.value as TopicId)}
+                  disabled={!canStart}
+                >
+                  {topics.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className={`planet-meter ${threatClass}`}>
+                <span>Planet peril</span>
+                <strong>{planetPeril}%</strong>
+                <div>
+                  <i style={{ width: `${planetPeril}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <div className="question-card">
+              <div className="question-meta">
+                <span>{topic.title}</span>
+                <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
+              </div>
+              <p className="transmission-text" aria-live="polite">
+                {displayPrompt}
+                <span className="cursor" aria-hidden="true" />
+              </p>
+            </div>
+
+            <label className="answer-console">
+              <span>{activePart === 'follow-up' ? 'Clarification' : 'Your answer'}</span>
+              <textarea
+                value={activePart === 'follow-up' ? followUpAnswer : mainAnswer}
+                onChange={(event) =>
+                  activePart === 'follow-up'
+                    ? setFollowUpAnswer(event.target.value)
+                    : setMainAnswer(event.target.value)
+                }
+                placeholder="Speak, then clean up the transcript here if needed."
+                disabled={canStart || exam.phase === 'grading'}
+              />
+            </label>
+
+            <div className="action-row">
+              <button
+                type="button"
+                className="primary"
+                onClick={canStart ? () => void startVoiceExam() : submitAnswer}
+                disabled={exam.phase === 'connecting' || exam.phase === 'grading'}
+              >
+                {canStart ? <Play size={18} /> : <Send size={18} />}
+                {primaryLabel}
+              </button>
+              {(isSpeaking || isConnected || isDemoMode) && !canStart ? (
+                <button type="button" className="secondary" onClick={interruptExaminer}>
+                  <OctagonPause size={18} />
+                  Silence
+                </button>
               ) : null}
             </div>
-          ) : null}
-        </section>
+
+            <p className="status-line" role="status">
+              {statusMessage}
+            </p>
+            {appError ? <p className="error-line">{appError}</p> : null}
+          </section>
+        ) : (
+          <section className="report-stage">
+            <div className="report-hero">
+              <div>
+                <p className="eyebrow">After-action report</p>
+                <h2>{report?.summary ?? 'The chamber is considering your fate.'}</h2>
+              </div>
+              <div className={`planet-meter ${threatClass}`}>
+                <span>Planet peril</span>
+                <strong>{planetPeril}%</strong>
+                <div>
+                  <i style={{ width: `${planetPeril}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <nav className="view-tabs" aria-label="Report views">
+              <button
+                type="button"
+                className={reportTab === 'scorecard' ? 'active' : ''}
+                onClick={() => setReportTab('scorecard')}
+              >
+                <BadgeCheck size={16} />
+                Scorecard
+              </button>
+              <button
+                type="button"
+                className={reportTab === 'transcript' ? 'active' : ''}
+                onClick={() => setReportTab('transcript')}
+              >
+                <AudioLines size={16} />
+                Transcript
+              </button>
+              <button
+                type="button"
+                className={reportTab === 'metrics' ? 'active' : ''}
+                onClick={() => setReportTab('metrics')}
+              >
+                <TimerReset size={16} />
+                Metrics
+              </button>
+            </nav>
+
+            {reportTab === 'scorecard' && report ? (
+              <div className="scorecard-view">
+                <div className="score">
+                  <strong>
+                    {report.totalScore}/{report.maxScore}
+                  </strong>
+                  <span>
+                    {report.source === 'openai' ? 'Rubric grade' : 'Local heuristic grade'}
+                  </span>
+                </div>
+                <div className="grade-list">
+                  {report.perQuestion.map((grade, index) => (
+                    <article
+                      key={grade.questionId}
+                      className={grade.score === 2 ? 'passed' : grade.score === 1 ? 'mixed' : 'failed'}
+                    >
+                      <div>
+                        <span>Q{index + 1}</span>
+                        <strong>
+                          {grade.score}/{grade.maxScore}
+                        </strong>
+                      </div>
+                      <p>{grade.feedback}</p>
+                    </article>
+                  ))}
+                </div>
+                <h3>Review next</h3>
+                <ul>
+                  {report.reviewSuggestions.map((suggestion) => (
+                    <li key={suggestion}>{suggestion}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {reportTab === 'transcript' ? (
+              <div className="transcript-view">
+                {entries.length === 0 ? (
+                  <p className="empty-state">
+                    Live voice transcripts appear here. Local preview answers are still included
+                    in the scorecard.
+                  </p>
+                ) : (
+                  <ol>
+                    {entries.map((entry) => (
+                      <li key={entry.id} className={entry.role}>
+                        <span>{entry.role}</span>
+                        <p>{entry.text}</p>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            ) : null}
+
+            {reportTab === 'metrics' ? (
+              <div className="metrics-view">
+                <dl>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd>{formatDuration(metrics.durationMs)}</dd>
+                  </div>
+                  <div>
+                    <dt>First response</dt>
+                    <dd>
+                      {metrics.firstResponseLatencyMs === null
+                        ? 'Not observed'
+                        : formatDuration(metrics.firstResponseLatencyMs)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Interruptions</dt>
+                    <dd>{metrics.interruptions}</dd>
+                  </div>
+                  <div>
+                    <dt>Transcript items</dt>
+                    <dd>{metrics.transcriptItems}</dd>
+                  </div>
+                </dl>
+                <div className="method-note">
+                  <Brain size={18} />
+                  <p>
+                    Questions are fixed rubric items. Live mode reads them through
+                    Realtime voice; preview mode uses local browser speech for reusable
+                    prompts without spending API credits.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <button type="button" className="secondary compact" onClick={resetExam}>
+              <Square size={18} />
+              Reset chamber
+            </button>
+          </section>
+        )}
       </section>
     </main>
   )
