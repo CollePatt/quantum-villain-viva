@@ -2,7 +2,7 @@
 
 A browser-based quantum mechanics oral examiner with a theatrical villain persona, deterministic exam flow, rubric grading, and voice-agent demo metrics.
 
-The first version is intentionally narrow: choose one of five topics, answer three spoken questions, allow at most one follow-up per answer, then unlock a tabbed report with correct ideas, missing ideas, transcript, and measured behavior.
+The first version is intentionally narrow: open an intercepted transmission, choose one of five topics, answer three spoken questions, allow at most one follow-up per answer, then unlock a tabbed report with correct ideas, missing ideas, transcript, and measured behavior.
 
 ## What it demonstrates
 
@@ -10,7 +10,7 @@ The first version is intentionally narrow: choose one of five topics, answer thr
 - Server-side API-key protection through short-lived Realtime client secrets.
 - A deterministic exam state machine rather than asking the model to manage the whole session.
 - Rubric-based grading through `POST /api/grade-exam`, with a local heuristic fallback when no key is configured.
-- An immersive exam surface: one topic dropdown, one primary action, live question reveal, and a villain speaking indicator.
+- An immersive exam surface: cinematic intro, one topic dropdown, one primary action, live question reveal, animated background lines, and a villain speaking indicator.
 - Metrics for a short demo: duration, first-response latency, interruption count, and transcript item count.
 
 ## Quick start

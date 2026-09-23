@@ -34,8 +34,12 @@ describe('App smoke test', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    expect(await screen.findByText(/Escape Professor Nocturne/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Transmission received/i })).toBeInTheDocument()
     expect(screen.queryByText(/Setup status/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Begin transmission/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Enter chamber/i }))
+
     expect(screen.getByRole('button', { name: /Begin transmission/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Transcript/i })).not.toBeInTheDocument()
 

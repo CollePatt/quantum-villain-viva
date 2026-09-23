@@ -55,6 +55,9 @@ type TokenResponse = {
 type ActiveAnswerPart = 'main' | 'follow-up'
 type ReportTab = 'scorecard' | 'transcript' | 'metrics'
 
+const INTRO_COPY =
+  "You are awake, inconveniently, aboard Professor Nocturne's orbital viva chamber. Earth is below. A theatrical device is charging. Answer three quantum questions and the chamber returns you home. Fail, and Nocturne becomes unbearably smug."
+
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
   realtimeModel: 'gpt-realtime-2.1',
@@ -155,6 +158,8 @@ export default function App() {
   const [appError, setAppError] = useState<string | null>(null)
   const [reportTab, setReportTab] = useState<ReportTab>('scorecard')
   const [displayPrompt, setDisplayPrompt] = useState('Select a topic and begin.')
+  const [introText, setIntroText] = useState('')
+  const [hasEnteredChamber, setHasEnteredChamber] = useState(false)
 
   const sessionRef = useRef<RealtimeSession | null>(null)
   const consumedIdsRef = useRef<Set<string>>(new Set())
@@ -185,6 +190,21 @@ export default function App() {
 
     return () => window.clearInterval(interval)
   }, [promptText])
+
+  useEffect(() => {
+    let index = 0
+
+    const interval = window.setInterval(() => {
+      index += 1
+      setIntroText(INTRO_COPY.slice(0, index))
+
+      if (index >= INTRO_COPY.length) {
+        window.clearInterval(interval)
+      }
+    }, 18)
+
+    return () => window.clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -595,33 +615,48 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="chamber-shell" aria-label="Quantum Villain Viva">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Quantum Villain Viva</p>
-            <h1>Escape Professor Nocturne's orbital viva chamber.</h1>
-            <p className="lede">
-              Survive three quantum questions and the chamber returns you home. Miss
-              badly, and the fictional planet vaporizer gets dramatic.
-            </p>
-          </div>
-          <div className="session-pill" aria-label="Session status">
-            <span>{modeLabel}</span>
-            <strong>{summarizeProgress(topic, exam)}</strong>
-          </div>
-        </header>
+      <div className="motion-field" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
 
+      {!hasEnteredChamber ? (
+        <section className="intro-shell" aria-label="Transmission received">
+          <div className="intro-terminal">
+            <p className="eyebrow">Emergency narrowband signal</p>
+            <h1>Transmission received</h1>
+            <p className="intro-copy" aria-live="polite">
+              {introText}
+              <span className="cursor" aria-hidden="true" />
+            </p>
+            <div className="intro-footer">
+              <div className="signal-strip" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => setHasEnteredChamber(true)}
+              >
+                <Play size={18} />
+                Enter chamber
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section
+          className={isReportUnlocked ? 'chamber-shell report-mode' : 'chamber-shell exam-mode'}
+          aria-label="Quantum Villain Viva"
+        >
         {!isReportUnlocked ? (
           <section className="exam-stage">
-            <div className="story-card">
-              <div>
-                <p className="eyebrow">Transmission received</p>
-                <h2>You wake inside a moving exam chamber.</h2>
-                <p>
-                  Nocturne offers a bargain: answer three questions, receive a report,
-                  and go home. The rubric is fair. His attitude is not.
-                </p>
-              </div>
+            <aside className="villain-panel" aria-label="Exam signal">
               <div className={isSpeaking ? 'villain-signal speaking' : 'villain-signal'}>
                 <div className="voice-orb" aria-hidden="true">
                   <span />
@@ -631,9 +666,22 @@ export default function App() {
                 <strong>{isSpeaking ? 'Nocturne speaking' : 'Nocturne waiting'}</strong>
                 <small>{isConnected ? 'Cedar voice active' : 'Local preview voice'}</small>
               </div>
-            </div>
 
-            <div className="exam-toolbar">
+              <div className={`planet-meter ${threatClass}`}>
+                <span>Planet peril</span>
+                <strong>{planetPeril}%</strong>
+                <div>
+                  <i style={{ width: `${planetPeril}%` }} />
+                </div>
+              </div>
+
+              <div className="session-pill" aria-label="Session status">
+                <span>{modeLabel}</span>
+                <strong>{summarizeProgress(topic, exam)}</strong>
+              </div>
+            </aside>
+
+            <section className="exam-console" aria-label="Exam console">
               <label className="topic-select">
                 <span>Topic</span>
                 <select
@@ -648,62 +696,55 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <div className={`planet-meter ${threatClass}`}>
-                <span>Planet peril</span>
-                <strong>{planetPeril}%</strong>
-                <div>
-                  <i style={{ width: `${planetPeril}%` }} />
+
+              <div className="question-card">
+                <div className="question-meta">
+                  <span>{topic.title}</span>
+                  <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
                 </div>
+                <p className="transmission-text" aria-live="polite">
+                  {displayPrompt}
+                  <span className="cursor" aria-hidden="true" />
+                </p>
               </div>
-            </div>
 
-            <div className="question-card">
-              <div className="question-meta">
-                <span>{topic.title}</span>
-                <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
-              </div>
-              <p className="transmission-text" aria-live="polite">
-                {displayPrompt}
-                <span className="cursor" aria-hidden="true" />
-              </p>
-            </div>
+              <label className="answer-console">
+                <span>{activePart === 'follow-up' ? 'Clarification' : 'Your answer'}</span>
+                <textarea
+                  value={activePart === 'follow-up' ? followUpAnswer : mainAnswer}
+                  onChange={(event) =>
+                    activePart === 'follow-up'
+                      ? setFollowUpAnswer(event.target.value)
+                      : setMainAnswer(event.target.value)
+                  }
+                  placeholder="Speak, then clean up the transcript here if needed."
+                  disabled={canStart || exam.phase === 'grading'}
+                />
+              </label>
 
-            <label className="answer-console">
-              <span>{activePart === 'follow-up' ? 'Clarification' : 'Your answer'}</span>
-              <textarea
-                value={activePart === 'follow-up' ? followUpAnswer : mainAnswer}
-                onChange={(event) =>
-                  activePart === 'follow-up'
-                    ? setFollowUpAnswer(event.target.value)
-                    : setMainAnswer(event.target.value)
-                }
-                placeholder="Speak, then clean up the transcript here if needed."
-                disabled={canStart || exam.phase === 'grading'}
-              />
-            </label>
-
-            <div className="action-row">
-              <button
-                type="button"
-                className="primary"
-                onClick={canStart ? () => void startVoiceExam() : submitAnswer}
-                disabled={exam.phase === 'connecting' || exam.phase === 'grading'}
-              >
-                {canStart ? <Play size={18} /> : <Send size={18} />}
-                {primaryLabel}
-              </button>
-              {(isSpeaking || isConnected || isDemoMode) && !canStart ? (
-                <button type="button" className="secondary" onClick={interruptExaminer}>
-                  <OctagonPause size={18} />
-                  Silence
+              <div className="action-row">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={canStart ? () => void startVoiceExam() : submitAnswer}
+                  disabled={exam.phase === 'connecting' || exam.phase === 'grading'}
+                >
+                  {canStart ? <Play size={18} /> : <Send size={18} />}
+                  {primaryLabel}
                 </button>
-              ) : null}
-            </div>
+                {(isSpeaking || isConnected || isDemoMode) && !canStart ? (
+                  <button type="button" className="secondary" onClick={interruptExaminer}>
+                    <OctagonPause size={18} />
+                    Silence
+                  </button>
+                ) : null}
+              </div>
 
-            <p className="status-line" role="status">
-              {statusMessage}
-            </p>
-            {appError ? <p className="error-line">{appError}</p> : null}
+              <p className="status-line" role="status">
+                {statusMessage}
+              </p>
+              {appError ? <p className="error-line">{appError}</p> : null}
+            </section>
           </section>
         ) : (
           <section className="report-stage">
@@ -845,6 +886,7 @@ export default function App() {
           </section>
         )}
       </section>
+      )}
     </main>
   )
 }
