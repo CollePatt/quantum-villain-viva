@@ -70,6 +70,10 @@ const STATIC_PREVIEW_CONFIG: AppConfig = {
   ],
 }
 
+function shouldUseStaticPreview(): boolean {
+  return typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')
+}
+
 function createEmptyMetrics(): ExamMetrics {
   return {
     sessionStartedAt: null,
@@ -141,7 +145,9 @@ function shouldDemandClarification(answer: string): boolean {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<AppConfig | null>(null)
+  const [config, setConfig] = useState<AppConfig | null>(() =>
+    shouldUseStaticPreview() ? STATIC_PREVIEW_CONFIG : null,
+  )
   const [topicId, setTopicId] = useState<TopicId>('tunneling')
   const topic = useMemo(() => getTopicById(topicId), [topicId])
   const [exam, setExam] = useState<ExamState>(() => createInitialExamState(topic))
@@ -209,17 +215,19 @@ export default function App() {
   useEffect(() => {
     let isMounted = true
 
-    fetchJson<AppConfig>('/api/config')
-      .then((nextConfig) => {
-        if (isMounted) {
-          setConfig(nextConfig)
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setConfig(STATIC_PREVIEW_CONFIG)
-        }
-      })
+    if (!shouldUseStaticPreview()) {
+      fetchJson<AppConfig>('/api/config')
+        .then((nextConfig) => {
+          if (isMounted) {
+            setConfig(nextConfig)
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setConfig(STATIC_PREVIEW_CONFIG)
+          }
+        })
+    }
 
     return () => {
       isMounted = false
