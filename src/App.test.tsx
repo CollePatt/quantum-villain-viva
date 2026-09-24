@@ -17,7 +17,7 @@ beforeEach(() => {
       hasApiKey: false,
       requiresAccessCode: false,
       realtimeModel: 'gpt-realtime-2.1',
-      realtimeVoice: 'cedar',
+      realtimeVoice: 'ash',
       graderModel: 'gpt-5.6-luna',
       openSourceRoadmap: ['Ollama local grader'],
     }),

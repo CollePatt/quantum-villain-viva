@@ -69,7 +69,7 @@ type RealtimeTransportEvent = {
 }
 
 const INTRO_COPY =
-  "You are awake, inconveniently, aboard Professor Nocturne's orbital viva chamber. Earth is below. A theatrical device is charging. Answer three quantum questions and the chamber returns you home. Fail, and Nocturne becomes unbearably smug."
+  "You wake inside Professor Nocturne's exam chamber. The door has no handle. The console offers one bargain: answer three quantum questions, earn release. Fail, and the chamber keeps your name in its permanent records."
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 const ACCESS_CODE_STORAGE_KEY = 'quantum-villain-viva-access-code'
@@ -97,16 +97,16 @@ const DIFFICULTY_OPTIONS: Array<{
 ]
 
 const MANUAL_TAUNTS = [
-  'Ah. Consulting forbidden notes. How very undergraduate.',
-  'Read quickly. The atmosphere is not known for its patience.',
-  'Fine. Take the manual. It will not explain the terror for you.',
+  'Consulting the manual. Sensible, if disappointing.',
+  'Read quickly. The chamber dislikes hesitation.',
+  'Use the notes if you must. Understanding is harder to borrow.',
 ]
 
 const STATIC_PREVIEW_CONFIG: AppConfig = {
   hasApiKey: false,
   requiresAccessCode: false,
   realtimeModel: 'gpt-realtime-2.1',
-  realtimeVoice: 'cedar',
+  realtimeVoice: 'ash',
   graderModel: 'local-heuristic',
   openSourceRoadmap: [
     'Ollama local grader',
@@ -273,19 +273,19 @@ function shouldDemandClarification(
 }
 
 function localQuestionBeat(question: Question, position: number): string {
-  return `The chamber seals. Question ${position}. ${question.prompt}`
+  return `Question ${position}. Answer cleanly. ${question.prompt}`
 }
 
 function localFollowUpBeat(question: Question): string {
-  return `Thin. Painfully thin. Clarify this before the planet notices. ${question.followUp}`
+  return `Not enough. Sharpen the reasoning. ${question.followUp}`
 }
 
 function localTransitionBeat(question: Question, position: number): string {
-  return `Hm. You have delayed catastrophe by a few seconds. Question ${position}. ${question.prompt}`
+  return `Acceptable, for now. Question ${position}. ${question.prompt}`
 }
 
 function localFinalBeat(): string {
-  return 'Enough. The chamber calculates whether your planet remains mostly where you left it.'
+  return 'Enough. The scorecard is being calculated.'
 }
 
 function buildManualPhrase(question: Question): string {
@@ -743,7 +743,6 @@ export default function App() {
             },
             output: {
               voice: token.realtimeVoice,
-              speed: 0.86,
             },
           },
           reasoning: {

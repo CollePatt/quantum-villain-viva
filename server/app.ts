@@ -21,7 +21,7 @@ import { getTopicById, topics } from '../src/domain/topics'
 import { buildGradingPrompt, buildVillainInstructions } from '../src/lib/examPrompts'
 
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'
-const DEFAULT_REALTIME_VOICE = 'cedar'
+const DEFAULT_REALTIME_VOICE = 'ash'
 const DEFAULT_GRADER_MODEL = 'gpt-4.1-mini'
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:5173',
@@ -363,7 +363,6 @@ function realtimeSessionParams(
         },
         output: {
           voice: realtimeVoice,
-          speed: 0.86,
         },
       },
       reasoning: {

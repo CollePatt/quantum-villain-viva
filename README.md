@@ -59,7 +59,7 @@ Required Vercel environment variables:
 OPENAI_API_KEY=sk-proj-...
 VIVA_ACCESS_CODE=share-this-with-testers
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
-OPENAI_REALTIME_VOICE=cedar
+OPENAI_REALTIME_VOICE=ash
 OPENAI_GRADER_MODEL=gpt-4.1-mini
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_MAX=20

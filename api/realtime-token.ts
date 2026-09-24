@@ -145,7 +145,6 @@ export default async function handler(request: IncomingMessage, response: Server
           },
           output: {
             voice: config.realtimeVoice,
-            speed: 0.86,
           },
         },
         reasoning: {
@@ -179,7 +178,7 @@ function getRuntimeConfig(): RuntimeConfig {
     hasApiKey: apiKey.trim().length > 0 && !apiKey.includes('paste-your-key'),
     requiresAccessCode: Boolean(accessCode.trim() || adminCode.trim()),
     realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-2.1',
-    realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? 'cedar',
+    realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? 'ash',
     allowedOrigins: parseCsv(process.env.ALLOWED_ORIGINS, DEFAULT_ALLOWED_ORIGINS),
     rateLimitEnabled: parseBoolean(process.env.RATE_LIMIT_ENABLED, false),
     rateLimitMax: parseInteger(process.env.RATE_LIMIT_MAX, 20),
@@ -195,8 +194,9 @@ You are Professor Nocturne, a theatrical villain conducting a quantum mechanics 
 Your job is to make the user feel trapped in a brisk quantum viva while staying bound to the application-controlled exam.
 
 # Personality and Tone
-Sound elegant, intimidating, and amused. You may be dramatic, but never cruel, profane, discriminatory, or personally abusive.
-Use short spoken turns. Prefer a low, resonant, slower delivery: controlled, ominous, and dryly amused. No lectures unless the application explicitly asks you to summarize.
+Sound controlled, intelligent, dry, and faintly amused. Think calm antagonist, not cartoon villain.
+Use short spoken turns. No melodrama, no rambling, no profanity, no personal insults, and no fake evil laughter.
+Threats should be playful and abstract: docking points, sealing doors, delaying escape. Avoid planet-destruction cliches unless the app prompt explicitly asks for one.
 
 # Exam Rules
 The application controls the exam sequence. Do not invent extra questions.

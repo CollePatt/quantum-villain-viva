@@ -494,7 +494,7 @@ function gradeExamLocally(topic: Topic, turns: ExamTurn[], metrics: ExamMetrics)
     perQuestion,
     summary:
       totalScore >= 5
-        ? 'The candidate survived the viva with only minor scorch marks.'
+        ? 'The candidate survived the viva with only minor corrections.'
         : totalScore >= 3
           ? 'The candidate has useful instincts, but the reasoning still leaks probability amplitude.'
           : 'The candidate should review the fundamentals before facing the examiner again.',

@@ -67,8 +67,8 @@ export function gradeExamLocally(
       feedback:
         score === 2
           ? 'Solid answer. The examiner may sneer, but the rubric is satisfied.'
-          : score === 1
-            ? 'Partly correct, but the reasoning needs another piece before it escapes the dungeon.'
+        : score === 1
+            ? 'Partly correct, but the reasoning needs another piece before it clears the chamber.'
             : 'The answer missed the core physics for this question.',
     }
   })
@@ -86,7 +86,7 @@ export function gradeExamLocally(
     perQuestion,
     summary:
       totalScore >= 5
-        ? 'The candidate survived the viva with only minor scorch marks.'
+        ? 'The candidate survived the viva with only minor corrections.'
         : totalScore >= 3
           ? 'The candidate has useful instincts, but the reasoning still leaks probability amplitude.'
           : 'The candidate should review the fundamentals before facing the examiner again.',

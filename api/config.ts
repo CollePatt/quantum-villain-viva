@@ -44,7 +44,7 @@ export default function handler(request: IncomingMessage, response: ServerRespon
     hasApiKey: apiKey.trim().length > 0 && !apiKey.includes('paste-your-key'),
     requiresAccessCode: Boolean(accessCode.trim() || adminCode.trim()),
     realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-2.1',
-    realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? 'cedar',
+    realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? 'ash',
     graderModel: process.env.OPENAI_GRADER_MODEL ?? 'gpt-4.1-mini',
     topics: TOPIC_SUMMARIES,
     openSourceRoadmap: [

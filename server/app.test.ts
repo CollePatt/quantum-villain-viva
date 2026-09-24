@@ -94,6 +94,6 @@ describe('API routes', () => {
 
     expect(response.status).toBe(200)
     expect(response.body.clientSecret).toBe('ek_test')
-    expect(response.body.realtimeVoice).toBe('cedar')
+    expect(response.body.realtimeVoice).toBe('ash')
   })
 })
