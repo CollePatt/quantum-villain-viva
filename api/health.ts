@@ -1,3 +1,7 @@
-import handler from '../server/vercel'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
-export default handler
+export default function handler(_request: IncomingMessage, response: ServerResponse) {
+  response.statusCode = 200
+  response.setHeader('Content-Type', 'application/json')
+  response.end(JSON.stringify({ ok: true }))
+}
