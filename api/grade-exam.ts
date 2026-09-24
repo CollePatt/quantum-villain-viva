@@ -1,1 +1,3 @@
-export { default } from '../server/vercel'
+import handler from '../server/vercel'
+
+export default handler
