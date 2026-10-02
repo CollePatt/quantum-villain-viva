@@ -1,25 +1,25 @@
 const OPENERS = [
-  'Ah. A volunteer. The door locks from my side.',
-  'Welcome to my chamber. Three questions, and you may leave.',
-  'Another challenger. How refreshing. How brief.',
+  'I see you. Three questions. Try not to blink.',
+  'Hold still. I am observing.',
+  'Another wavefunction wanders in. Let us collapse it.',
 ]
 
 const IMPRESSED = [
   'Hm. Annoyingly correct.',
-  'Not bad. I am almost disappointed.',
-  'Correct. Do not let it go to your head.',
+  'Correct. I saw that coming. Mostly.',
+  'Not bad. Noted.',
 ]
 
 const UNIMPRESSED = [
   'Bold. Wrong, but bold.',
+  'I observed that. I wish I had not.',
   'Fascinating. Physics disagrees.',
-  'I have heard sharper answers from a toaster.',
 ]
 
 const HINT_TAUNTS = [
-  'A hint? How very classical of you.',
+  'A hint? I saw that.',
   'Fine. Take it. I am keeping the points.',
-  'Cheating. I respect it, slightly.',
+  'Peeking at the notes. I am the one who watches here.',
 ]
 
 function pick(lines: string[]): string {
@@ -30,5 +30,5 @@ export const villainLines = {
   opener: () => pick(OPENERS),
   reaction: (strong: boolean) => pick(strong ? IMPRESSED : UNIMPRESSED),
   hint: () => pick(HINT_TAUNTS),
-  final: 'That is all. Let us see how badly that went.',
+  final: 'That is all. Let us see what collapsed.',
 }

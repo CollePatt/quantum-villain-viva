@@ -16,6 +16,7 @@ import { questionPoints, TIME_LIMIT_SECONDS, type TurnPlay } from './domain/scor
 import { getRoundTopic, topics } from './domain/topics'
 import { HomeScreen, type TopicChoice } from './components/HomeScreen'
 import { Leaderboard } from './components/Leaderboard'
+import type { ObserverMood } from './components/Observer'
 import { PlayScreen, type VoiceMode } from './components/PlayScreen'
 import { ResultsScreen, type ScoredQuestion } from './components/ResultsScreen'
 import { useLeaderboard } from './hooks/useLeaderboard'
@@ -110,6 +111,7 @@ export default function App() {
   const [usedHint, setUsedHint] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [villainLine, setVillainLine] = useState('')
+  const [reactionMood, setReactionMood] = useState<ObserverMood | null>(null)
   const [voiceMode, setVoiceMode] = useState<VoiceMode>('local')
   const [isConnecting, setIsConnecting] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -135,6 +137,7 @@ export default function App() {
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
   const lockInRef = useRef<() => void>(() => undefined)
+  const moodTimerRef = useRef(0)
 
   const board = useLeaderboard(level)
   const speech = useSpeechRecognition(
@@ -160,6 +163,11 @@ export default function App() {
     writeAccessCode(accessCode.trim())
   }, [accessCode])
 
+  // Each screen and question starts at the top, so the eye is always in view.
+  useEffect(() => {
+    window.scrollTo?.({ top: 0 })
+  }, [screen, exam.questionIndex])
+
   useEffect(() => {
     let isMounted = true
     if (!isStaticPreview()) {
@@ -182,7 +190,7 @@ export default function App() {
     }
   }, [])
 
-  // Question clock. It pauses while Nocturne talks, so only thinking time counts.
+  // Question clock. It pauses while the Observer talks, so only thinking time counts.
   const isAnswering = screen === 'play' && exam.phase === 'answering' && !isConnecting && !isGrading
   useEffect(() => {
     if (!isAnswering) {
@@ -209,6 +217,13 @@ export default function App() {
     setAnswer('')
     answerRef.current = ''
     setRealtimeDraft('')
+  }
+
+  // The eye reacts to an answer for a moment before going back to watching.
+  function flashMood(mood: ObserverMood, ms: number) {
+    window.clearTimeout(moodTimerRef.current)
+    setReactionMood(mood)
+    moodTimerRef.current = window.setTimeout(() => setReactionMood(null), ms)
   }
 
   function closeSession() {
@@ -321,7 +336,7 @@ export default function App() {
       // Loaded on demand so the first screen stays light on phones.
       const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime')
       const agent = new RealtimeAgent({
-        name: 'Professor Nocturne',
+        name: 'The Observer',
         instructions: buildVillainInstructions(topic),
         voice: token.realtimeVoice,
       })
@@ -385,7 +400,7 @@ export default function App() {
     } catch {
       sessionRef.current?.close()
       sessionRef.current = null
-      startLocal(topic, 'Live voice is busy, so Nocturne is using your browser’s voice.')
+      startLocal(topic, 'Live voice is busy, so the Observer is using your browser’s voice.')
     }
   }
 
@@ -448,6 +463,7 @@ export default function App() {
     const turns = recorded.completedTurns.map((turn, index) => ({ ...turn, ...nextPlays[index] }))
     const strong = looksStrong(roundTopic, questionIndex, spokenAnswer)
     const reaction = villainLines.reaction(strong)
+    flashMood(strong ? 'impressed' : spokenAnswer ? 'smug' : 'angry', 2800)
 
     if (recorded.phase === 'grading') {
       setExam(recorded)
@@ -487,6 +503,7 @@ export default function App() {
       return
     }
     setUsedHint(true)
+    flashMood('smug', 2000)
     const taunt = villainLines.hint()
     if (voiceMode === 'realtime' && sessionRef.current) {
       sendVoicePrompt(buildHintTauntPrompt())
@@ -531,7 +548,7 @@ export default function App() {
       graded = gradeExamLocally(roundTopic, turns, finalMetrics)
     }
 
-    // Let Nocturne finish his last line before the results replace the screen.
+    // Let the Observer finish his last line before the results replace the screen.
     const deadline = Date.now() + 4000
     while (isSpeakingRef.current && Date.now() < deadline) {
       await wait(150)
@@ -635,6 +652,7 @@ export default function App() {
           isConnecting={isConnecting}
           isSpeaking={isSpeaking}
           isPlayerSpeaking={isPlayerSpeaking}
+          reactionMood={reactionMood}
           isListening={speech.isListening}
           canListen={speech.isSupported}
           onToggleMic={toggleMic}

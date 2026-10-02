@@ -4,7 +4,7 @@ import { MAX_POINTS, rankFor, type QuestionPoints } from '../domain/scoring'
 import type { ExamReport, Level, Topic } from '../domain/schemas'
 import type { LeaderboardEntry } from '../hooks/useLeaderboard'
 import { Leaderboard } from './Leaderboard'
-import { Nocturne } from './Nocturne'
+import { Observer, type ObserverMood } from './Observer'
 
 export type ScoredQuestion = {
   prompt: string
@@ -90,7 +90,8 @@ export function ResultsScreen({
   const [name, setName] = useState(readName)
   const [submit, setSubmit] = useState<SubmitState>({ status: 'idle' })
   const [shareNote, setShareNote] = useState<string | null>(null)
-  const won = totalPoints >= 450
+  const mood: ObserverMood =
+    totalPoints >= 700 ? 'defeated' : totalPoints >= 450 ? 'impressed' : totalPoints >= 200 ? 'smug' : 'angry'
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -113,7 +114,7 @@ export function ResultsScreen({
 
   async function handleShare() {
     const url = `${window.location.origin}${window.location.pathname}`
-    const text = `I scored ${totalPoints} against Professor Nocturne in Quantum Villain (${rank.title}, ${topic.shortName}). Think you can out-think a quantum supervillain?`
+    const text = `I scored ${totalPoints} against The Observer in Quantum Villain (${rank.title}, ${topic.shortName}). Think you can survive being observed?`
     try {
       if (navigator.share) {
         await navigator.share({ title: 'Quantum Villain', text, url })
@@ -130,15 +131,15 @@ export function ResultsScreen({
     <section className="screen results" aria-label="Results">
       <header className="topbar">
         <button type="button" className="wordmark as-button" onClick={onHome}>
-          Quantum<b>Villain</b>
+          Quantum Villain
         </button>
         <span className="level-tag">
-          {topic.emoji} {topic.shortName} · {level === 'curious' ? 'Curious' : 'Physicist'}
+          {topic.shortName} · {level === 'curious' ? 'Curious' : 'Physicist'}
         </span>
       </header>
 
       <div className="score-hero">
-        <Nocturne mood={won ? 'defeated' : 'smug'} size={120} />
+        <Observer mood={mood} width={200} />
         <p className="rank-title">{rank.title}</p>
         <p className="big-score" aria-label={`${totalPoints} points`}>
           {shown}

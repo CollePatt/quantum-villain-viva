@@ -51,7 +51,7 @@ export type Rank = {
 
 export function rankFor(points: number): Rank {
   if (points >= 900) {
-    return { title: 'Quantum Overlord', line: 'Nocturne is filing a formal complaint.' }
+    return { title: 'Quantum Overlord', line: 'The Observer looked away first.' }
   }
   if (points >= 700) {
     return { title: 'Wavefunction Whisperer', line: 'He will pretend this never happened.' }
@@ -60,7 +60,7 @@ export function rankFor(points: number): Rank {
     return { title: 'Superposition Survivor', line: 'Half right, half wrong, fully escaped.' }
   }
   if (points >= 200) {
-    return { title: 'Classically Trained', line: 'Newton would be proud. Nocturne is not.' }
+    return { title: 'Classically Trained', line: 'Newton would be proud. The Observer is not.' }
   }
   return { title: 'Collapsed on Contact', line: 'The chamber door stays locked. For now.' }
 }

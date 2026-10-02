@@ -50,13 +50,13 @@ describe('App', () => {
     render(<App />)
 
     expect(
-      screen.getByRole('heading', { name: /out-think a quantum supervillain/i }),
+      screen.getByRole('heading', { name: /collapses your score/i }),
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole('radio', { name: /Tunneling/i }))
-    await user.click(screen.getByRole('button', { name: /Face Nocturne/i }))
+    await user.click(screen.getByRole('button', { name: /Be observed/i }))
 
-    expect(screen.getByText(/Question 1 of 3/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Question 1 of 3/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /get through a wall/i })).toBeInTheDocument()
 
     const answers = [

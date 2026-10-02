@@ -9,13 +9,11 @@ type LeaderboardProps = {
   emptyText?: string
 }
 
-const MEDALS = ['🥇', '🥈', '🥉']
-
-function topicEmoji(topicId: string): string {
+function topicName(topicId: string): string {
   try {
-    return getTopicById(topicId as TopicId).emoji
+    return getTopicById(topicId as TopicId).shortName
   } catch {
-    return '⚛️'
+    return ''
   }
 }
 
@@ -32,11 +30,9 @@ export function Leaderboard({ entries, isLoading, highlightId, emptyText }: Lead
     <ol className="board">
       {entries.map((entry, index) => (
         <li key={entry.id} className={entry.id === highlightId ? 'board-row you' : 'board-row'}>
-          <span className="board-rank">{MEDALS[index] ?? index + 1}</span>
+          <span className="board-rank">{String(index + 1).padStart(2, '0')}</span>
           <span className="board-name">{entry.name}</span>
-          <span className="board-topic" aria-hidden="true">
-            {topicEmoji(entry.topicId)}
-          </span>
+          <span className="board-topic">{topicName(entry.topicId)}</span>
           <span className="board-points">{entry.points}</span>
         </li>
       ))}

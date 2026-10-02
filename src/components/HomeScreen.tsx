@@ -1,7 +1,7 @@
-import { Mic, Play, Trophy } from 'lucide-react'
+import { ArrowRight, Mic, Trophy } from 'lucide-react'
 import { topics } from '../domain/topics'
 import type { Level, TopicId } from '../domain/schemas'
-import { Nocturne } from './Nocturne'
+import { Observer } from './Observer'
 
 export type TopicChoice = TopicId | 'random'
 
@@ -38,23 +38,27 @@ export function HomeScreen({
   return (
     <section className="screen home" aria-label="Start">
       <header className="topbar">
-        <span className="wordmark">
-          Quantum<b>Villain</b>
-        </span>
+        <span className="wordmark">Quantum Villain</span>
         <button type="button" className="icon-button" onClick={onOpenBoard} aria-label="Open scoreboard">
           <Trophy size={20} />
         </button>
       </header>
 
       <div className="hero">
-        <Nocturne mood="smug" size={168} />
-        <h1>Can you out-think a quantum supervillain?</h1>
-        <p className="lede">Professor Nocturne asks 3 questions. Answer out loud before the clock runs out.</p>
+        <Observer mood="idle" width={250} followPointer />
+        <p className="equation">|ψ⟩ collapses upon observation</p>
+        <h1>
+          Every answer <mark>collapses</mark> your score.
+        </h1>
+        <p className="lede">
+          The Observer asks 3 questions out loud. Answer out loud before the clock runs out. Points for being
+          right, and for being fast.
+        </p>
       </div>
 
       <div className="field">
         <span className="field-label" id="level-label">
-          Difficulty
+          Clearance level
         </span>
         <div className="segmented" role="radiogroup" aria-labelledby="level-label">
           {LEVEL_OPTIONS.map((option) => (
@@ -75,7 +79,7 @@ export function HomeScreen({
 
       <div className="field">
         <span className="field-label" id="topic-label">
-          Topic
+          Subject
         </span>
         <div className="chips" role="radiogroup" aria-labelledby="topic-label">
           <button
@@ -85,7 +89,7 @@ export function HomeScreen({
             className={topicChoice === 'random' ? 'chip active' : 'chip'}
             onClick={() => onTopicChange('random')}
           >
-            <span aria-hidden="true">🎲</span> Surprise me
+            Surprise me
           </button>
           {topics.map((topic) => (
             <button
@@ -96,7 +100,7 @@ export function HomeScreen({
               className={topicChoice === topic.id ? 'chip active' : 'chip'}
               onClick={() => onTopicChange(topic.id)}
             >
-              <span aria-hidden="true">{topic.emoji}</span> {topic.shortName}
+              {topic.shortName}
             </button>
           ))}
         </div>
@@ -118,28 +122,13 @@ export function HomeScreen({
 
       <div className="start-dock">
         <button type="button" className="cta" onClick={onStart}>
-          <Play size={22} fill="currentColor" />
-          Face Nocturne
+          <span>Be observed</span>
+          <ArrowRight size={24} />
         </button>
         <p className="fine-print">
-          <Mic size={14} /> {isLiveVoice ? 'Live AI voice · uses your mic' : 'Uses your mic or keyboard'} · about 2 minutes
+          <Mic size={14} /> {isLiveVoice ? 'Live AI voice · uses your mic' : 'Uses your mic or keyboard'} · about 2 min
         </p>
       </div>
-
-      <ol className="how">
-        <li>
-          <b>1</b>
-          <span>Hear the question</span>
-        </li>
-        <li>
-          <b>2</b>
-          <span>Answer out loud</span>
-        </li>
-        <li>
-          <b>3</b>
-          <span>Score points for being right and fast</span>
-        </li>
-      </ol>
     </section>
   )
 }

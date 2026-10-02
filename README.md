@@ -1,10 +1,10 @@
 # Quantum Villain
 
-A two-minute voice game built for phones. Professor Nocturne, a quantum supervillain, asks three questions out loud. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
+A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, asks three questions out loud. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
 
 - **Curious** mode asks plain-English questions anyone can try. **Physicist** mode keeps the original oral-exam questions.
 - Points: up to 250 for accuracy and 83 for speed per question (999 max). A hint costs 50.
-- With an OpenAI key, Nocturne speaks through OpenAI Realtime (speech-to-speech over WebRTC). Without one, the game still works using the browser's own speech recognition and voice.
+- With an OpenAI key, the Observer speaks through OpenAI Realtime (speech-to-speech over WebRTC). Without one, the game still works using the browser's own speech recognition and voice.
 
 ## Live Demo
 
