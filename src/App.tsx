@@ -1,18 +1,5 @@
-import {
-  AudioLines,
-  BadgeCheck,
-  BookOpen,
-  Brain,
-  OctagonPause,
-  Play,
-  Send,
-  Square,
-  TimerReset,
-  X,
-} from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { RealtimeAgent, RealtimeSession } from '@openai/agents/realtime'
-import type { RealtimeItem } from '@openai/agents/realtime'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RealtimeItem, RealtimeSession } from '@openai/agents/realtime'
 import './App.css'
 import {
   beginExam,
@@ -21,34 +8,42 @@ import {
   markAsking,
   markQuestionAsked,
   recordAnswer,
-  recordFollowUp,
-  summarizeProgress,
   type ExamState,
 } from './domain/examState'
-import type { ExamMetrics, ExamReport, ExamTurn, Question, TopicId } from './domain/schemas'
-import { gradeExamLocally } from './domain/grading'
-import { getTopicById, topics } from './domain/topics'
+import { conceptMatched, gradeExamLocally } from './domain/grading'
+import type { ExamMetrics, ExamReport, ExamTurn, Level, Topic } from './domain/schemas'
+import { questionPoints, TIME_LIMIT_SECONDS, type TurnPlay } from './domain/scoring'
+import { getRoundTopic, topics } from './domain/topics'
+import { HomeScreen, type TopicChoice } from './components/HomeScreen'
+import { Leaderboard } from './components/Leaderboard'
+import { PlayScreen, type VoiceMode } from './components/PlayScreen'
+import { ResultsScreen, type ScoredQuestion } from './components/ResultsScreen'
+import { useLeaderboard } from './hooks/useLeaderboard'
+import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import {
+  accessHeaders,
+  fetchJson,
+  isStaticPreview,
+  readAccessCode,
+  readStored,
+  STATIC_PREVIEW_CONFIG,
+  writeAccessCode,
+  writeStored,
+  type AppConfig,
+} from './lib/api'
 import {
   buildAnswerTransitionPrompt,
   buildFinalAnswerPrompt,
-  buildFollowUpPrompt,
+  buildHintTauntPrompt,
   buildQuestionPrompt,
   buildVillainInstructions,
 } from './lib/examPrompts'
-import {
-  collectNewUserText,
-  extractTranscriptEntries,
-  type TranscriptEntry,
-} from './lib/transcript'
+import { speakLocally, stopLocalSpeech } from './lib/localVoice'
+import { extractTranscriptEntries } from './lib/transcript'
+import { villainLines } from './lib/villainLines'
 
-type AppConfig = {
-  hasApiKey: boolean
-  requiresAccessCode: boolean
-  realtimeModel: string
-  realtimeVoice: string
-  graderModel: string
-  openSourceRoadmap: string[]
-}
+type Screen = 'home' | 'play' | 'results'
+type GradedReport = ExamReport & { scoreToken?: string }
 
 type TokenResponse = {
   clientSecret: string
@@ -57,111 +52,16 @@ type TokenResponse = {
   realtimeVoice: string
 }
 
-type ActiveAnswerPart = 'main' | 'follow-up'
-type DifficultyMode = 'survival' | 'viva' | 'doom'
-type ReportTab = 'scorecard' | 'transcript' | 'metrics'
 type RealtimeTransportEvent = {
   type: string
   item_id?: string
   transcript?: string
   delta?: string
-  error?: unknown
 }
 
-const INTRO_COPY =
-  "You wake inside Professor Nocturne's exam chamber. The door has no handle. The console offers one bargain: answer three quantum questions, earn release. Fail, and the chamber keeps your name in its permanent records."
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
-const ACCESS_CODE_STORAGE_KEY = 'quantum-villain-viva-access-code'
-
-const DIFFICULTY_OPTIONS: Array<{
-  id: DifficultyMode
-  label: string
-  description: string
-}> = [
-  {
-    id: 'survival',
-    label: 'Survival',
-    description: 'Contraband notes available. Nocturne hates this.',
-  },
-  {
-    id: 'viva',
-    label: 'Viva',
-    description: 'Sharper follow-ups. Notes remain within reach.',
-  },
-  {
-    id: 'doom',
-    label: 'Doom',
-    description: 'Field manual sealed. Planetary arrogance engaged.',
-  },
-]
-
-const MANUAL_TAUNTS = [
-  'Consulting the manual. Sensible, if disappointing.',
-  'Read quickly. The chamber dislikes hesitation.',
-  'Use the notes if you must. Understanding is harder to borrow.',
-]
-
-const STATIC_PREVIEW_CONFIG: AppConfig = {
-  hasApiKey: false,
-  requiresAccessCode: false,
-  realtimeModel: 'gpt-realtime-2.1',
-  realtimeVoice: 'ash',
-  graderModel: 'local-heuristic',
-  openSourceRoadmap: [
-    'Ollama local grader',
-    'Whisper or local STT transcription path',
-    'Local TTS layer behind the same exam state machine',
-  ],
-}
-
-function shouldUseStaticPreview(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    window.location.hostname.endsWith('github.io') &&
-    API_BASE_URL.length === 0
-  )
-}
-
-function apiUrl(path: string): string {
-  return `${API_BASE_URL}${path}`
-}
-
-function readStoredAccessCode(): string {
-  if (typeof window === 'undefined') {
-    return ''
-  }
-
-  try {
-    return typeof window.localStorage.getItem === 'function'
-      ? window.localStorage.getItem(ACCESS_CODE_STORAGE_KEY) ?? ''
-      : ''
-  } catch {
-    return ''
-  }
-}
-
-function writeStoredAccessCode(accessCode: string) {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  try {
-    if (
-      accessCode &&
-      typeof window.localStorage.setItem === 'function'
-    ) {
-      window.localStorage.setItem(ACCESS_CODE_STORAGE_KEY, accessCode)
-      return
-    }
-
-    if (typeof window.localStorage.removeItem === 'function') {
-      window.localStorage.removeItem(ACCESS_CODE_STORAGE_KEY)
-    }
-  } catch {
-    // Private browsing and test environments may block storage.
-  }
-}
+const BESTS_STORAGE_KEY = 'quantum-villain-bests'
+// The timer waits this long after a question appears, so a slow voice start does not cost points.
+const QUESTION_GRACE_MS = 1500
 
 function createEmptyMetrics(): ExamMetrics {
   return {
@@ -175,545 +75,251 @@ function createEmptyMetrics(): ExamMetrics {
   }
 }
 
-function formatDuration(durationMs: number): string {
-  if (durationMs < 1000) {
-    return `${Math.round(durationMs)} ms`
-  }
-
-  return `${(durationMs / 1000).toFixed(1)} s`
-}
-
 function appendText(existing: string, fresh: string): string {
-  return [existing.trim(), fresh.trim()].filter(Boolean).join(' ').trim()
+  return [existing.trim(), fresh.trim()].filter(Boolean).join(' ')
 }
 
-function normalizeError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return 'Something went wrong.'
+function looksStrong(topic: Topic, questionIndex: number, answer: string): boolean {
+  const question = topic.questions[questionIndex]
+  return question.expectedConcepts.filter((concept) => conceptMatched(answer, concept)).length >= 1
 }
 
-async function readApiError(response: Response): Promise<string> {
-  const fallback = `${response.status} ${response.statusText}`
+function readBests(): Record<string, number> {
   try {
-    const body = (await response.json()) as { error?: { message?: string } }
-    return body.error?.message ?? fallback
+    return JSON.parse(readStored(BESTS_STORAGE_KEY) || '{}') as Record<string, number>
   } catch {
-    return fallback
+    return {}
   }
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-    ...init,
-  })
-
-  if (!response.ok) {
-    throw new Error(await readApiError(response))
-  }
-
-  return response.json() as Promise<T>
-}
-
-function normalizePhysicsText(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
-}
-
-function conceptMatched(answer: string, concept: string): boolean {
-  const normalizedAnswer = normalizePhysicsText(answer)
-  const conceptWords = normalizePhysicsText(concept)
-    .split(' ')
-    .filter((word) => word.length > 4)
-
-  if (conceptWords.length === 0) {
-    return false
-  }
-
-  const hits = conceptWords.filter((word) => normalizedAnswer.includes(word))
-  return hits.length >= Math.min(2, conceptWords.length)
-}
-
-function conceptHitCount(question: Question, answer: string): number {
-  return question.expectedConcepts.filter((concept) => conceptMatched(answer, concept)).length
-}
-
-function shouldDemandClarification(
-  question: Question,
-  answer: string,
-  difficulty: DifficultyMode,
-): boolean {
-  const normalized = answer.trim().toLowerCase()
-  const wordCount = normalized.split(/\s+/).filter(Boolean).length
-  const conceptHits = conceptHitCount(question, answer)
-  const ignoranceSignal =
-    normalized.includes("don't know") ||
-    normalized.includes('do not know') ||
-    normalized.includes('idk') ||
-    normalized.includes('not sure')
-
-  if (difficulty === 'survival') {
-    return wordCount < 8 || conceptHits < 1 || ignoranceSignal
-  }
-
-  if (difficulty === 'doom') {
-    return wordCount < 16 || conceptHits < Math.min(3, question.expectedConcepts.length) || ignoranceSignal
-  }
-
-  return (
-    wordCount < 12 ||
-    conceptHits < 2 ||
-    ignoranceSignal
-  )
-}
-
-function localQuestionBeat(question: Question, position: number): string {
-  return `Question ${position}. Answer cleanly. ${question.prompt}`
-}
-
-function localFollowUpBeat(question: Question): string {
-  return `Not enough. Sharpen the reasoning. ${question.followUp}`
-}
-
-function localTransitionBeat(question: Question, position: number): string {
-  return `Acceptable, for now. Question ${position}. ${question.prompt}`
-}
-
-function localFinalBeat(): string {
-  return 'Enough. The scorecard is being calculated.'
-}
-
-function buildManualPhrase(question: Question): string {
-  return `Work these into your own answer: ${question.expectedConcepts.slice(0, 3).join('; ')}.`
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(() =>
-    shouldUseStaticPreview() ? STATIC_PREVIEW_CONFIG : null,
+    isStaticPreview() ? STATIC_PREVIEW_CONFIG : null,
   )
-  const [topicId, setTopicId] = useState<TopicId>('tunneling')
-  const topic = useMemo(() => getTopicById(topicId), [topicId])
-  const [exam, setExam] = useState<ExamState>(() => createInitialExamState(topic))
-  const [entries, setEntries] = useState<TranscriptEntry[]>([])
-  const [mainAnswer, setMainAnswer] = useState('')
-  const [followUpAnswer, setFollowUpAnswer] = useState('')
-  const [activePart, setActivePart] = useState<ActiveAnswerPart>('main')
-  const [metrics, setMetrics] = useState<ExamMetrics>(() => createEmptyMetrics())
-  const [report, setReport] = useState<ExamReport | null>(null)
-  const [statusMessage, setStatusMessage] = useState('Awaiting transmission.')
-  const [isConnected, setIsConnected] = useState(false)
-  const [isDemoMode, setIsDemoMode] = useState(false)
+  const [screen, setScreen] = useState<Screen>('home')
+  const [level, setLevel] = useState<Level>('curious')
+  const [topicChoice, setTopicChoice] = useState<TopicChoice>('random')
+  const [roundTopic, setRoundTopic] = useState<Topic>(() => getRoundTopic('tunneling', 'curious'))
+  const [exam, setExam] = useState<ExamState>(() => createInitialExamState(roundTopic))
+  const [answer, setAnswer] = useState('')
+  const [plays, setPlays] = useState<TurnPlay[]>([])
+  const [usedHint, setUsedHint] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [villainLine, setVillainLine] = useState('')
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('local')
+  const [isConnecting, setIsConnecting] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [appError, setAppError] = useState<string | null>(null)
-  const [reportTab, setReportTab] = useState<ReportTab>('scorecard')
-  const [difficulty, setDifficulty] = useState<DifficultyMode>('survival')
-  const [accessCode, setAccessCode] = useState(readStoredAccessCode)
-  const [isManualOpen, setIsManualOpen] = useState(false)
-  const [isPerilSurging, setIsPerilSurging] = useState(false)
-  const [displayPrompt, setDisplayPrompt] = useState('Select a topic and begin.')
-  const [introText, setIntroText] = useState('')
-  const [hasEnteredChamber, setHasEnteredChamber] = useState(false)
+  const [isPlayerSpeaking, setIsPlayerSpeaking] = useState(false)
+  const [realtimeDraft, setRealtimeDraft] = useState('')
+  const [isLocking, setIsLocking] = useState(false)
+  const [isGrading, setIsGrading] = useState(false)
+  const [report, setReport] = useState<GradedReport | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [metrics, setMetrics] = useState<ExamMetrics>(createEmptyMetrics)
+  const [accessCode, setAccessCode] = useState(readAccessCode)
+  const [isBoardOpen, setIsBoardOpen] = useState(false)
+  const [bests, setBests] = useState<Record<string, number>>(readBests)
 
   const sessionRef = useRef<RealtimeSession | null>(null)
-  const consumedIdsRef = useRef<Set<string>>(new Set())
-  const activePartRef = useRef<ActiveAnswerPart>('main')
+  const examRef = useRef(exam)
+  const answerRef = useRef(answer)
+  const elapsedRef = useRef(0)
+  const isSpeakingRef = useRef(false)
+  const graceUntilRef = useRef(0)
+  const transcriptPendingRef = useRef(false)
+  const lockingRef = useRef(false)
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
-  const perilTimerRef = useRef<number | null>(null)
-  const manualTauntIndexRef = useRef(0)
+  const lockInRef = useRef<() => void>(() => undefined)
 
-  const currentQuestion = getCurrentQuestion(topic, exam)
-  const canStart = exam.phase === 'idle' || exam.phase === 'report' || exam.phase === 'error'
-  const canAnswer = exam.phase === 'answering'
-  const isReportUnlocked = exam.phase === 'report'
-  const selectedDifficulty = DIFFICULTY_OPTIONS.find((option) => option.id === difficulty)
-  const manualLocked = difficulty === 'doom'
-  const needsAccessCode = Boolean(config?.requiresAccessCode)
-  const promptText = canStart
-    ? 'Select a topic and begin the transmission.'
-    : activePart === 'follow-up'
-      ? currentQuestion.followUp
-      : currentQuestion.prompt
+  const board = useLeaderboard(level)
+  const speech = useSpeechRecognition(
+    useCallback((text: string) => setAnswer((current) => appendText(current, text)), []),
+  )
+
+  const timeLimit = TIME_LIMIT_SECONDS[level]
+  const question = getCurrentQuestion(roundTopic, exam)
 
   useEffect(() => {
-    activePartRef.current = activePart
-  }, [activePart])
+    examRef.current = exam
+  }, [exam])
 
   useEffect(() => {
-    let index = 0
-
-    const interval = window.setInterval(() => {
-      index += 1
-      setDisplayPrompt(promptText.slice(0, index))
-
-      if (index >= promptText.length) {
-        window.clearInterval(interval)
-      }
-    }, 12)
-
-    return () => window.clearInterval(interval)
-  }, [promptText])
+    answerRef.current = answer
+  }, [answer])
 
   useEffect(() => {
-    let index = 0
+    isSpeakingRef.current = isSpeaking
+  }, [isSpeaking])
 
-    const interval = window.setInterval(() => {
-      index += 1
-      setIntroText(INTRO_COPY.slice(0, index))
-
-      if (index >= INTRO_COPY.length) {
-        window.clearInterval(interval)
-      }
-    }, 18)
-
-    return () => window.clearInterval(interval)
-  }, [])
+  useEffect(() => {
+    writeAccessCode(accessCode.trim())
+  }, [accessCode])
 
   useEffect(() => {
     let isMounted = true
-
-    if (!shouldUseStaticPreview()) {
-      fetchJson<AppConfig>(apiUrl('/api/config'))
-        .then((nextConfig) => {
+    if (!isStaticPreview()) {
+      fetchJson<AppConfig>('/api/config')
+        .then((next) => {
+          if (next.hasApiKey) {
+            // Warm the voice SDK so pressing Start connects faster.
+            void import('@openai/agents/realtime')
+          }
           if (isMounted) {
-            setConfig(nextConfig)
+            setConfig(next)
           }
         })
-        .catch(() => {
-          if (isMounted) {
-            setConfig(STATIC_PREVIEW_CONFIG)
-          }
-        })
+        .catch(() => isMounted && setConfig(STATIC_PREVIEW_CONFIG))
     }
-
     return () => {
       isMounted = false
-      if (perilTimerRef.current !== null) {
-        window.clearTimeout(perilTimerRef.current)
-      }
       sessionRef.current?.close()
-      window.speechSynthesis?.cancel()
+      stopLocalSpeech()
     }
   }, [])
 
+  // Question clock. It pauses while Nocturne talks, so only thinking time counts.
+  const isAnswering = screen === 'play' && exam.phase === 'answering' && !isConnecting && !isGrading
   useEffect(() => {
-    writeStoredAccessCode(accessCode.trim())
-  }, [accessCode])
-
-  function accessHeaders(): HeadersInit {
-    const cleanCode = accessCode.trim()
-    return cleanCode ? { 'X-Viva-Access-Code': cleanCode } : {}
-  }
-
-  function triggerPerilSurge() {
-    if (perilTimerRef.current !== null) {
-      window.clearTimeout(perilTimerRef.current)
-    }
-
-    setIsPerilSurging(true)
-    perilTimerRef.current = window.setTimeout(() => {
-      setIsPerilSurging(false)
-      perilTimerRef.current = null
-    }, 1300)
-  }
-
-  function speakLocally(text: string) {
-    if (
-      typeof window === 'undefined' ||
-      !window.speechSynthesis ||
-      typeof window.SpeechSynthesisUtterance === 'undefined'
-    ) {
+    if (!isAnswering) {
       return
     }
-
-    window.speechSynthesis.cancel()
-    const utterance = new window.SpeechSynthesisUtterance(text)
-    utterance.rate = 0.86
-    utterance.pitch = 0.55
-    utterance.volume = 0.9
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend = () => setIsSpeaking(false)
-    utterance.onerror = () => setIsSpeaking(false)
-    window.speechSynthesis.speak(utterance)
-  }
-
-  function deliverScenePrompt(prompt: string, fallbackText: string) {
-    if (isConnected && !isDemoMode) {
-      sendVoicePrompt(prompt)
-      return
-    }
-
-    speakLocally(fallbackText)
-  }
-
-  function deliverQuestionPrompt(question: Question, position: number) {
-    deliverScenePrompt(
-      buildQuestionPrompt(question, position),
-      localQuestionBeat(question, position),
-    )
-  }
-
-  function deliverFollowUpPrompt(question: Question, answer: string) {
-    deliverScenePrompt(buildFollowUpPrompt(question, answer), localFollowUpBeat(question))
-  }
-
-  function deliverTransitionPrompt(
-    question: Question,
-    answer: string,
-    followUpAnswer: string,
-    nextQuestion: Question,
-    nextPosition: number,
-  ) {
-    deliverScenePrompt(
-      buildAnswerTransitionPrompt(
-        question,
-        answer,
-        followUpAnswer,
-        nextQuestion,
-        nextPosition,
-      ),
-      localTransitionBeat(nextQuestion, nextPosition),
-    )
-  }
-
-  function deliverFinalPrompt(question: Question, answer: string, followUpAnswer: string) {
-    deliverScenePrompt(
-      buildFinalAnswerPrompt(question, answer, followUpAnswer),
-      localFinalBeat(),
-    )
-  }
-
-  function handleDifficultyChange(nextDifficulty: DifficultyMode) {
-    setDifficulty(nextDifficulty)
-    if (nextDifficulty === 'doom') {
-      setIsManualOpen(false)
-    }
-
-    const nextOption = DIFFICULTY_OPTIONS.find((option) => option.id === nextDifficulty)
-    setStatusMessage(`${nextOption?.label ?? 'Viva'} protocol armed.`)
-  }
-
-  function handleManualToggle() {
-    if (isManualOpen) {
-      setIsManualOpen(false)
-      return
-    }
-
-    if (manualLocked) {
-      setStatusMessage('Doom protocol has sealed the field manual.')
-      triggerPerilSurge()
-      return
-    }
-
-    setIsManualOpen(true)
-
-    const taunt = MANUAL_TAUNTS[manualTauntIndexRef.current % MANUAL_TAUNTS.length]
-    manualTauntIndexRef.current += 1
-    setStatusMessage(taunt)
-
-    if (canStart || isSpeaking) {
-      return
-    }
-
-    if (isConnected && !isDemoMode) {
-      sendVoicePrompt(
-        `The candidate opened the stolen field manual. Say one short irritated villain line, then stop. Suggested line: "${taunt}"`,
-      )
-      return
-    }
-
-    if (isDemoMode) {
-      speakLocally(taunt)
-    }
-  }
-
-  function resetForTopic(nextTopicId: TopicId) {
-    sessionRef.current?.close()
-    window.speechSynthesis?.cancel()
-    sessionRef.current = null
-    const nextTopic = getTopicById(nextTopicId)
-    setTopicId(nextTopicId)
-    setExam(createInitialExamState(nextTopic))
-    setEntries([])
-    setMainAnswer('')
-    setFollowUpAnswer('')
-    setActivePart('main')
-    setMetrics(createEmptyMetrics())
-    setReport(null)
-    setIsConnected(false)
-    setIsDemoMode(false)
-    setIsSpeaking(false)
-    setAppError(null)
-    setReportTab('scorecard')
-    setIsManualOpen(false)
-    setIsPerilSurging(false)
-    setStatusMessage('Topic selected. The chamber is listening.')
-    consumedIdsRef.current = new Set()
-  }
-
-  function updateTranscript(history: RealtimeItem[]) {
-    const nextEntries = extractTranscriptEntries(history)
-    setEntries(nextEntries)
-    setMetrics((current) => ({
-      ...current,
-      transcriptItems: nextEntries.length,
-    }))
-  }
-
-  function appendCapturedTranscript(text: string) {
-    const cleanText = text.trim()
-    if (!cleanText) {
-      return
-    }
-
-    if (activePartRef.current === 'follow-up') {
-      setFollowUpAnswer((current) => appendText(current, cleanText))
-      return
-    }
-
-    setMainAnswer((current) => appendText(current, cleanText))
-  }
-
-  function handleTransportEvent(event: RealtimeTransportEvent) {
-    if (event.type === 'input_audio_buffer.speech_started') {
-      setStatusMessage('Voice detected. Finish your thought, then submit.')
-      return
-    }
-
-    if (event.type === 'input_audio_buffer.speech_stopped') {
-      setStatusMessage('Audio received. Waiting for transcript...')
-      return
-    }
-
-    if (event.type === 'conversation.item.input_audio_transcription.delta') {
-      setStatusMessage('Transcribing your answer...')
-      return
-    }
-
-    if (event.type === 'conversation.item.input_audio_transcription.completed') {
-      if (event.item_id) {
-        consumedIdsRef.current.add(event.item_id)
+    const interval = window.setInterval(() => {
+      if (isSpeakingRef.current || lockingRef.current || Date.now() < graceUntilRef.current) {
+        return
       }
-      appendCapturedTranscript(event.transcript ?? '')
-      setStatusMessage('Voice captured. Review or submit your answer.')
-      return
-    }
+      elapsedRef.current = Math.min(timeLimit, elapsedRef.current + 0.1)
+      setElapsed(elapsedRef.current)
+      if (elapsedRef.current >= timeLimit) {
+        lockInRef.current()
+      }
+    }, 100)
+    return () => window.clearInterval(interval)
+  }, [isAnswering, timeLimit])
 
-    if (event.type === 'conversation.item.input_audio_transcription.failed') {
-      setStatusMessage('I heard audio, but transcription failed. Try typing or repeat once.')
-    }
+  function resetQuestionClock() {
+    elapsedRef.current = 0
+    setElapsed(0)
+    graceUntilRef.current = Date.now() + QUESTION_GRACE_MS
+    setUsedHint(false)
+    setAnswer('')
+    answerRef.current = ''
+    setRealtimeDraft('')
   }
 
-  function markPromptLatency() {
-    const startedAt = pendingPromptStartedAtRef.current
-    if (!startedAt) {
-      return
-    }
-
-    const latency = Math.max(0, performance.now() - startedAt)
-    pendingPromptStartedAtRef.current = null
-
-    setMetrics((current) => ({
-      ...current,
-      firstResponseLatencyMs: current.firstResponseLatencyMs ?? latency,
-      promptLatenciesMs: [...current.promptLatenciesMs, latency],
-    }))
+  function closeSession() {
+    sessionRef.current?.close()
+    sessionRef.current = null
+    stopLocalSpeech()
+    speech.stop()
+    setIsSpeaking(false)
+    setIsPlayerSpeaking(false)
   }
+
+  // ---------- voice output ----------
 
   function sendVoicePrompt(prompt: string) {
     const session = sessionRef.current
     if (!session) {
       return
     }
-
     pendingPromptStartedAtRef.current = performance.now()
     if (session.transport.requestResponse) {
-      session.transport.requestResponse({
-        instructions: prompt,
-        output_modalities: ['audio'],
-      })
+      session.transport.requestResponse({ instructions: prompt, output_modalities: ['audio'] })
       return
     }
-
     session.transport.sendEvent({
       type: 'response.create',
-      response: {
-        instructions: prompt,
-        output_modalities: ['audio'],
-      },
+      response: { instructions: prompt, output_modalities: ['audio'] },
     })
   }
 
-  function takeFreshSpeech(): string {
-    const { text, ids } = collectNewUserText(entries, consumedIdsRef.current)
-    ids.forEach((id) => consumedIdsRef.current.add(id))
-    return text
-  }
-
-  function startDemoExam() {
-    const startedAt = new Date().toISOString()
-    sessionStartedAtRef.current = performance.now()
-    const nextExam = markQuestionAsked(markAsking(beginExam(createInitialExamState(topic))))
-
-    setExam(nextExam)
-    setMetrics({
-      ...createEmptyMetrics(),
-      sessionStartedAt: startedAt,
+  function speakLine(caption: string, spoken: string) {
+    setVillainLine(caption)
+    speakLocally(spoken, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
     })
-    setReport(null)
-    setIsDemoMode(true)
-    setIsSpeaking(false)
-    setReportTab('scorecard')
-    setIsManualOpen(difficulty === 'survival')
-    setStatusMessage('Question 1 transmitted. Answer to proceed.')
-    deliverQuestionPrompt(topic.questions[0], 1)
   }
 
-  async function startVoiceExam() {
-    setAppError(null)
-    setReport(null)
-    setEntries([])
-    setMainAnswer('')
-    setFollowUpAnswer('')
-    setActivePart('main')
-    setIsSpeaking(false)
-    setIsManualOpen(false)
-    consumedIdsRef.current = new Set()
-
-    if (!config?.hasApiKey) {
-      startDemoExam()
+  function deliver(mode: VoiceMode, realtimePrompt: string, caption: string, spoken: string) {
+    if (mode === 'realtime' && sessionRef.current) {
+      sendVoicePrompt(realtimePrompt)
       return
     }
+    speakLine(caption, spoken)
+  }
 
-    if (needsAccessCode && !accessCode.trim()) {
-      setAppError(null)
-      setStatusMessage('Enter the private review access code to open the voice channel.')
-      return
-    }
+  // ---------- starting a round ----------
 
-    const startedAt = new Date().toISOString()
+  function startRound() {
+    const topicId =
+      topicChoice === 'random'
+        ? topics[Math.floor(Math.random() * topics.length)].id
+        : topicChoice
+    const topic = getRoundTopic(topicId, level)
+
+    closeSession()
+    setRoundTopic(topic)
+    setPlays([])
+    setReport(null)
+    setNotice(null)
+    setVillainLine('')
+    setMetrics({ ...createEmptyMetrics(), sessionStartedAt: new Date().toISOString() })
     sessionStartedAtRef.current = performance.now()
-    setMetrics({
-      ...createEmptyMetrics(),
-      sessionStartedAt: startedAt,
-    })
+    resetQuestionClock()
+    setScreen('play')
 
-    const startingExam = beginExam(createInitialExamState(topic))
-    setExam(startingExam)
-    setStatusMessage('Opening the voice channel...')
+    const useLiveVoice =
+      Boolean(config?.hasApiKey) && (!config?.requiresAccessCode || accessCode.trim().length > 0)
+    if (useLiveVoice) {
+      void startRealtime(topic)
+    } else {
+      startLocal(topic)
+    }
+  }
+
+  function askFirstQuestion(topic: Topic, mode: VoiceMode) {
+    const asked = markQuestionAsked(markAsking(beginExam(createInitialExamState(topic))))
+    setExam(asked)
+    examRef.current = asked
+    resetQuestionClock()
+    const opener = villainLines.opener()
+    deliver(
+      mode,
+      buildQuestionPrompt(topic.questions[0], 1),
+      opener,
+      `${opener} Question one. ${topic.questions[0].prompt}`,
+    )
+  }
+
+  function startLocal(topic: Topic, fallbackNotice?: string) {
+    setVoiceMode('local')
+    setIsConnecting(false)
+    if (fallbackNotice) {
+      setNotice(fallbackNotice)
+    }
+    askFirstQuestion(topic, 'local')
+  }
+
+  async function startRealtime(topic: Topic) {
+    setVoiceMode('realtime')
+    setIsConnecting(true)
+    setExam(beginExam(createInitialExamState(topic)))
 
     try {
-      const token = await fetchJson<TokenResponse>(apiUrl('/api/realtime-token'), {
+      const token = await fetchJson<TokenResponse>('/api/realtime-token', {
         method: 'POST',
-        headers: accessHeaders(),
+        headers: accessHeaders(accessCode),
         body: JSON.stringify({ topicId: topic.id }),
       })
 
+      // Loaded on demand so the first screen stays light on phones.
+      const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime')
       const agent = new RealtimeAgent({
         name: 'Professor Nocturne',
         instructions: buildVillainInstructions(topic),
@@ -726,13 +332,10 @@ export default function App() {
           outputModalities: ['audio'],
           audio: {
             input: {
-              noiseReduction: {
-                type: 'near_field',
-              },
+              noiseReduction: { type: 'near_field' },
               transcription: {
                 model: 'gpt-transcribe',
-                prompt:
-                  'Quantum mechanics oral exam answer. Preserve physics vocabulary and symbols when possible.',
+                prompt: 'Spoken answer in a quantum physics quiz game. Preserve physics vocabulary when possible.',
               },
               turnDetection: {
                 type: 'semantic_vad',
@@ -741,614 +344,369 @@ export default function App() {
                 eagerness: 'medium',
               },
             },
-            output: {
-              voice: token.realtimeVoice,
-            },
+            output: { voice: token.realtimeVoice },
           },
-          reasoning: {
-            effort: 'low',
-          },
+          reasoning: { effort: 'low' },
         },
       })
 
-      session.on('history_updated', updateTranscript)
+      session.on('history_updated', (history: RealtimeItem[]) => {
+        const entries = extractTranscriptEntries(history)
+        const lastVillain = [...entries].reverse().find((entry) => entry.role === 'assistant')
+        if (lastVillain) {
+          setVillainLine(lastVillain.text)
+        }
+        setMetrics((current) => ({ ...current, transcriptItems: entries.length }))
+      })
       session.on('transport_event', handleTransportEvent)
       session.on('audio_start', () => {
-        markPromptLatency()
+        const startedAt = pendingPromptStartedAtRef.current
+        if (startedAt) {
+          const latency = Math.max(0, performance.now() - startedAt)
+          pendingPromptStartedAtRef.current = null
+          setMetrics((current) => ({
+            ...current,
+            firstResponseLatencyMs: current.firstResponseLatencyMs ?? latency,
+            promptLatenciesMs: [...current.promptLatenciesMs, latency],
+          }))
+        }
         setIsSpeaking(true)
       })
-      session.on('audio_stopped', () => {
-        setIsSpeaking(false)
-      })
+      session.on('audio_stopped', () => setIsSpeaking(false))
       session.on('audio_interrupted', () => {
         setIsSpeaking(false)
-        setMetrics((current) => ({
-          ...current,
-          interruptions: current.interruptions + 1,
-        }))
-      })
-      session.on('error', (error) => {
-        setAppError(normalizeError(error.error))
+        setMetrics((current) => ({ ...current, interruptions: current.interruptions + 1 }))
       })
 
       sessionRef.current = session
       await session.connect({ apiKey: token.clientSecret, model: token.realtimeModel })
-      setIsConnected(true)
-      setStatusMessage('Question 1 transmitted. Answer to proceed.')
-
-      const askingExam = markQuestionAsked(markAsking(startingExam))
-      setExam(askingExam)
-      sendVoicePrompt(buildQuestionPrompt(getCurrentQuestion(topic, askingExam), 1))
-    } catch (error: unknown) {
-      setExam(createInitialExamState(topic))
-      setIsConnected(false)
-      setIsSpeaking(false)
-      setAppError(normalizeError(error))
-      setStatusMessage('Voice failed. Local preview remains available.')
+      setIsConnecting(false)
+      askFirstQuestion(topic, 'realtime')
+    } catch {
+      sessionRef.current?.close()
+      sessionRef.current = null
+      startLocal(topic, 'Live voice is busy, so Nocturne is using your browser’s voice.')
     }
   }
 
-  async function gradeExam(turns: ExamTurn[]) {
-    const now = new Date().toISOString()
-    const durationMs =
-      sessionStartedAtRef.current === null
-        ? metrics.durationMs
-        : Math.max(0, performance.now() - sessionStartedAtRef.current)
-    const finalMetrics = {
-      ...metrics,
-      sessionEndedAt: now,
-      durationMs,
-      transcriptItems: entries.length,
+  function handleTransportEvent(event: RealtimeTransportEvent) {
+    switch (event.type) {
+      case 'input_audio_buffer.speech_started':
+        transcriptPendingRef.current = true
+        setIsPlayerSpeaking(true)
+        break
+      case 'input_audio_buffer.speech_stopped':
+        setIsPlayerSpeaking(false)
+        break
+      case 'conversation.item.input_audio_transcription.delta':
+        setRealtimeDraft((current) => current + (event.delta ?? ''))
+        break
+      case 'conversation.item.input_audio_transcription.completed':
+        transcriptPendingRef.current = false
+        setRealtimeDraft('')
+        setAnswer((current) => {
+          const next = appendText(current, event.transcript ?? '')
+          answerRef.current = next
+          return next
+        })
+        break
+      case 'conversation.item.input_audio_transcription.failed':
+        transcriptPendingRef.current = false
+        setRealtimeDraft('')
+        break
     }
+  }
 
-    setMetrics(finalMetrics)
-    setStatusMessage('Calculating planetary consequences...')
+  // ---------- answering ----------
 
-    try {
-      const nextReport = await fetchJson<ExamReport>(apiUrl('/api/grade-exam'), {
-        method: 'POST',
-        headers: accessHeaders(),
-        body: JSON.stringify({
-          topicId: topic.id,
-          turns,
-          metrics: finalMetrics,
-        }),
-      })
-      setReport(nextReport)
-      setExam((current) => ({ ...current, phase: 'report' }))
-      setReportTab('scorecard')
-      setStatusMessage('Report unlocked.')
-    } catch (error: unknown) {
-      if (!config?.hasApiKey) {
-        const nextReport = gradeExamLocally(topic, turns, finalMetrics)
-        setReport(nextReport)
-        setExam((current) => ({ ...current, phase: 'report' }))
-        setReportTab('scorecard')
-        setStatusMessage('Report unlocked in local preview.')
-        return
+  async function lockIn() {
+    if (lockingRef.current || examRef.current.phase !== 'answering') {
+      return
+    }
+    lockingRef.current = true
+    setIsLocking(true)
+
+    // Give live transcription a moment to deliver the player's last words.
+    if (voiceMode === 'realtime') {
+      const deadline = Date.now() + 3000
+      while (transcriptPendingRef.current && Date.now() < deadline) {
+        await wait(100)
       }
-
-      setAppError(normalizeError(error))
-      setStatusMessage('Could not grade the exam.')
     }
-  }
+    speech.stop()
+    stopLocalSpeech()
 
-  function submitAnswer() {
-    if (!canAnswer) {
-      return
-    }
+    const current = examRef.current
+    const questionIndex = current.questionIndex
+    const answered = question
+    const spokenAnswer = answerRef.current.trim()
+    const play: TurnPlay = { secondsUsed: Math.round(elapsedRef.current * 10) / 10, usedHint }
+    const nextPlays = [...plays, play]
+    setPlays(nextPlays)
 
-    const freshSpeech = takeFreshSpeech()
+    const recorded = recordAnswer(roundTopic, current, spokenAnswer || 'No answer captured.')
+    const turns = recorded.completedTurns.map((turn, index) => ({ ...turn, ...nextPlays[index] }))
+    const strong = looksStrong(roundTopic, questionIndex, spokenAnswer)
+    const reaction = villainLines.reaction(strong)
 
-    if (activePart === 'main') {
-      const answer = appendText(mainAnswer, freshSpeech)
-
-      if (
-        shouldDemandClarification(currentQuestion, answer, difficulty) &&
-        !exam.followUpsUsed[currentQuestion.id]
-      ) {
-        const nextExam = recordFollowUp(topic, exam)
-        setExam(nextExam)
-        setMainAnswer(answer)
-        setFollowUpAnswer('')
-        setActivePart('follow-up')
-        triggerPerilSurge()
-        if (difficulty === 'survival') {
-          setIsManualOpen(true)
-        }
-        setStatusMessage('Nocturne reacts, then demands one clarification.')
-        deliverFollowUpPrompt(currentQuestion, answer)
-        return
-      }
-
-      completeTurn(answer, '')
-      return
-    }
-
-    completeTurn(mainAnswer, appendText(followUpAnswer, freshSpeech))
-  }
-
-  function completeTurn(answer: string, followUp: string) {
-    const capturedAnswer = answer.trim() || 'No answer captured.'
-    const combinedAnswer = appendText(capturedAnswer, followUp)
-    const weakAfterFollowUp = shouldDemandClarification(
-      currentQuestion,
-      combinedAnswer,
-      difficulty,
-    )
-    const nextExam = recordAnswer(topic, exam, capturedAnswer, followUp)
-
-    setMainAnswer('')
-    setFollowUpAnswer('')
-    setActivePart('main')
-    setExam(nextExam)
-
-    if (weakAfterFollowUp) {
-      triggerPerilSurge()
-    }
-
-    if (nextExam.phase === 'grading') {
-      deliverFinalPrompt(currentQuestion, capturedAnswer, followUp)
-      void gradeExam(nextExam.completedTurns)
-      return
-    }
-
-    const nextQuestion = getCurrentQuestion(topic, nextExam)
-    const nextQuestionNumber = nextExam.questionIndex + 1
-    const askingExam = markQuestionAsked(nextExam)
-    setExam(askingExam)
-    setStatusMessage(`Nocturne reacts. Question ${nextQuestionNumber} incoming.`)
-    deliverTransitionPrompt(
-      currentQuestion,
-      capturedAnswer,
-      followUp,
-      nextQuestion,
-      nextQuestionNumber,
-    )
-  }
-
-  function interruptExaminer() {
-    sessionRef.current?.interrupt()
-    window.speechSynthesis?.cancel()
-    setIsSpeaking(false)
-    setMetrics((current) => ({
-      ...current,
-      interruptions: current.interruptions + 1,
-    }))
-  }
-
-  function resetExam() {
-    sessionRef.current?.close()
-    window.speechSynthesis?.cancel()
-    sessionRef.current = null
-    sessionStartedAtRef.current = null
-    pendingPromptStartedAtRef.current = null
-    consumedIdsRef.current = new Set()
-    setExam(createInitialExamState(topic))
-    setEntries([])
-    setMainAnswer('')
-    setFollowUpAnswer('')
-    setActivePart('main')
-    setMetrics(createEmptyMetrics())
-    setReport(null)
-    setIsConnected(false)
-    setIsDemoMode(false)
-    setIsSpeaking(false)
-    setAppError(null)
-    setReportTab('scorecard')
-    setIsManualOpen(false)
-    setIsPerilSurging(false)
-    setStatusMessage('Awaiting transmission.')
-  }
-
-  const basePeril = difficulty === 'survival' ? 48 : difficulty === 'viva' ? 67 : 84
-  const planetPeril = report
-    ? Math.max(0, Math.round((1 - report.totalScore / report.maxScore) * 100))
-    : Math.min(
-        97,
-        basePeril + exam.completedTurns.length * 7 + (isPerilSurging ? 16 : 0),
+    if (recorded.phase === 'grading') {
+      setExam(recorded)
+      examRef.current = recorded
+      deliver(
+        voiceMode,
+        buildFinalAnswerPrompt(answered, spokenAnswer),
+        villainLines.final,
+        `${reaction} ${villainLines.final}`,
       )
-  const threatClass = report
-    ? report.totalScore >= 5
-      ? 'safe'
-      : report.totalScore >= 3
-        ? 'warning'
-        : 'danger'
-    : 'warning'
-  const modeLabel = isConnected
-    ? 'Voice link'
-    : isDemoMode
-      ? 'Local voice'
-      : config?.hasApiKey
-        ? 'Ready'
-        : 'Preview'
-  const primaryLabel = canStart
-    ? isReportUnlocked
-      ? 'Run another exam'
-      : 'Begin transmission'
-    : activePart === 'follow-up'
-      ? 'Submit follow-up'
-      : 'Submit answer'
-  const chamberModeClass = isReportUnlocked ? 'report-mode' : 'exam-mode'
-  const chamberClass = `chamber-shell ${chamberModeClass}${isPerilSurging ? ' peril-surge' : ''}`
+      lockingRef.current = false
+      setIsLocking(false)
+      await grade(turns, nextPlays)
+      return
+    }
+
+    const next = markQuestionAsked(recorded)
+    const nextQuestion = getCurrentQuestion(roundTopic, next)
+    setExam(next)
+    examRef.current = next
+    resetQuestionClock()
+    lockingRef.current = false
+    setIsLocking(false)
+    deliver(
+      voiceMode,
+      buildAnswerTransitionPrompt(answered, spokenAnswer, nextQuestion, next.questionIndex + 1),
+      reaction,
+      `${reaction} Question ${next.questionIndex + 1}. ${nextQuestion.prompt}`,
+    )
+  }
+  useEffect(() => {
+    lockInRef.current = () => void lockIn()
+  })
+
+  function takeHint() {
+    if (usedHint) {
+      return
+    }
+    setUsedHint(true)
+    const taunt = villainLines.hint()
+    if (voiceMode === 'realtime' && sessionRef.current) {
+      sendVoicePrompt(buildHintTauntPrompt())
+    } else {
+      speakLine(taunt, taunt)
+    }
+  }
+
+  function toggleMic() {
+    if (speech.isListening) {
+      speech.stop()
+      return
+    }
+    stopLocalSpeech()
+    setIsSpeaking(false)
+    speech.start()
+  }
+
+  // ---------- grading ----------
+
+  async function grade(turns: ExamTurn[], finalPlays: TurnPlay[]) {
+    setIsGrading(true)
+    const finalMetrics: ExamMetrics = {
+      ...metrics,
+      sessionEndedAt: new Date().toISOString(),
+      durationMs:
+        sessionStartedAtRef.current === null ? 0 : Math.max(0, performance.now() - sessionStartedAtRef.current),
+    }
+    setMetrics(finalMetrics)
+
+    let graded: GradedReport
+    try {
+      if (isStaticPreview()) {
+        throw new Error('No API in the static preview.')
+      }
+      graded = await fetchJson<GradedReport>('/api/grade-exam', {
+        method: 'POST',
+        headers: accessHeaders(accessCode),
+        body: JSON.stringify({ topicId: roundTopic.id, turns, metrics: finalMetrics }),
+      })
+    } catch {
+      graded = gradeExamLocally(roundTopic, turns, finalMetrics)
+    }
+
+    // Let Nocturne finish his last line before the results replace the screen.
+    const deadline = Date.now() + 4000
+    while (isSpeakingRef.current && Date.now() < deadline) {
+      await wait(150)
+    }
+
+    const total = scoreQuestions(graded, finalPlays).reduce((sum, item) => sum + item.points.total, 0)
+    const bestKey = `${level}:${roundTopic.id}`
+    if (total > (bests[bestKey] ?? -1)) {
+      const nextBests = { ...bests, [bestKey]: total }
+      setBests(nextBests)
+      writeStored(BESTS_STORAGE_KEY, JSON.stringify(nextBests))
+    }
+
+    closeSession()
+    setReport(graded)
+    setIsGrading(false)
+    setScreen('results')
+    void board.refresh()
+  }
+
+  function scoreQuestions(graded: ExamReport, finalPlays: TurnPlay[]): ScoredQuestion[] {
+    return roundTopic.questions.map((roundQuestion, index) => {
+      const grade =
+        graded.perQuestion.find((candidate) => candidate.questionId === roundQuestion.id) ??
+        graded.perQuestion[index]
+      const play = finalPlays[index] ?? { secondsUsed: timeLimit, usedHint: false }
+      const rubricScore = grade?.score ?? 0
+      return {
+        prompt: roundQuestion.prompt,
+        rubricScore,
+        feedback: grade?.feedback ?? 'No answer recorded.',
+        missing: grade?.missingIdeas ?? [],
+        points: questionPoints(rubricScore, play, timeLimit),
+      }
+    })
+  }
+
+  const scored = report ? scoreQuestions(report, plays) : []
+  const totalPoints = scored.reduce((sum, item) => sum + item.points.total, 0)
+
+  async function submitScore(name: string) {
+    if (!report?.scoreToken) {
+      return { ok: false as const, message: 'This score cannot be posted.' }
+    }
+    const result = await board.submit(name, totalPoints, report.scoreToken)
+    return result.ok
+      ? { ok: true as const, entryId: result.entry.id, rank: result.rank }
+      : { ok: false as const, message: result.message }
+  }
+
+  function quit() {
+    closeSession()
+    setExam(createInitialExamState(roundTopic))
+    setIsConnecting(false)
+    setIsGrading(false)
+    setScreen('home')
+  }
+
+  const voiceSummary =
+    voiceMode === 'realtime'
+      ? `Voice: OpenAI Realtime (${config?.realtimeModel ?? 'realtime'}), speech-to-speech over WebRTC.${
+          metrics.firstResponseLatencyMs !== null
+            ? ` First reply in ${(metrics.firstResponseLatencyMs / 1000).toFixed(1)} s.`
+            : ''
+        }`
+      : 'Voice: your browser’s built-in speech recognition and text-to-speech.'
 
   return (
-    <main className="app-shell">
-      <div className="motion-field" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-      </div>
+    <main className="app">
+      <div className="backdrop" aria-hidden="true" />
 
-      {!hasEnteredChamber ? (
-        <section className="intro-shell" aria-label="Transmission received">
-          <div className="intro-terminal">
-            <p className="eyebrow">Emergency narrowband signal</p>
-            <h1>Transmission received</h1>
-            <p className="intro-copy" aria-live="polite">
-              {introText}
-              <span className="cursor" aria-hidden="true" />
-            </p>
-            <div className="intro-footer">
-              <div className="signal-strip" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => setHasEnteredChamber(true)}
-              >
-                <Play size={18} />
-                Enter chamber
-              </button>
-            </div>
-          </div>
-        </section>
-      ) : (
-        <section
-          className={chamberClass}
-          aria-label="Quantum Villain Viva"
-        >
-        <div className="peril-flash" aria-hidden="true" />
-        {!isReportUnlocked ? (
-          <section className="exam-stage">
-            <aside className="villain-panel" aria-label="Exam signal">
-              <div className={isSpeaking ? 'villain-signal speaking' : 'villain-signal'}>
-                <div className="voice-orb" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <strong>{isSpeaking ? 'Nocturne speaking' : 'Nocturne waiting'}</strong>
-                <small>
-                  {isConnected ? `${config?.realtimeVoice ?? 'Realtime'} voice active` : 'Local preview voice'}
-                </small>
-              </div>
+      {screen === 'home' ? (
+        <HomeScreen
+          level={level}
+          onLevelChange={setLevel}
+          topicChoice={topicChoice}
+          onTopicChange={setTopicChoice}
+          needsAccessCode={Boolean(config?.requiresAccessCode)}
+          accessCode={accessCode}
+          onAccessCodeChange={setAccessCode}
+          isLiveVoice={Boolean(config?.hasApiKey)}
+          onStart={startRound}
+          onOpenBoard={() => {
+            setIsBoardOpen(true)
+            void board.refresh()
+          }}
+        />
+      ) : null}
 
-              <div className={`planet-meter ${threatClass}`}>
-                <span>Planet peril</span>
-                <strong>{planetPeril}%</strong>
-                <div>
-                  <i style={{ width: `${planetPeril}%` }} />
-                </div>
-              </div>
+      {screen === 'play' ? (
+        <PlayScreen
+          topic={roundTopic}
+          question={question}
+          questionIndex={exam.questionIndex}
+          timeLimit={timeLimit}
+          elapsed={elapsed}
+          answer={answer}
+          onAnswerChange={setAnswer}
+          interim={voiceMode === 'realtime' ? realtimeDraft : speech.interim}
+          voiceMode={voiceMode}
+          isConnecting={isConnecting}
+          isSpeaking={isSpeaking}
+          isPlayerSpeaking={isPlayerSpeaking}
+          isListening={speech.isListening}
+          canListen={speech.isSupported}
+          onToggleMic={toggleMic}
+          micError={speech.error}
+          villainLine={villainLine}
+          usedHint={usedHint}
+          onHint={takeHint}
+          isLocking={isLocking}
+          isGrading={isGrading}
+          onLockIn={() => void lockIn()}
+          onQuit={quit}
+          notice={notice}
+        />
+      ) : null}
 
-              <div className="session-pill" aria-label="Session status">
-                <span>{modeLabel}</span>
-                <strong>{summarizeProgress(topic, exam)}</strong>
-              </div>
+      {screen === 'results' && report ? (
+        <ResultsScreen
+          topic={roundTopic}
+          level={level}
+          report={report}
+          totalPoints={totalPoints}
+          questions={scored}
+          canPost={Boolean(report.scoreToken)}
+          boardEnabled={board.enabled}
+          boardEntries={board.entries}
+          boardLoading={board.isLoading}
+          personalBest={bests[`${level}:${roundTopic.id}`] ?? null}
+          voiceSummary={voiceSummary}
+          onSubmitScore={submitScore}
+          onPlayAgain={startRound}
+          onHome={() => setScreen('home')}
+        />
+      ) : null}
 
-              <div className="protocol-panel" aria-label="Difficulty protocol">
-                <span>Protocol</span>
-                <div className="protocol-options" role="group" aria-label="Difficulty">
-                  {DIFFICULTY_OPTIONS.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={difficulty === option.id ? 'active' : ''}
-                      onClick={() => handleDifficultyChange(option.id)}
-                      disabled={!canStart}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <small>{selectedDifficulty?.description}</small>
-              </div>
-            </aside>
-
-            <section className="exam-console" aria-label="Exam console">
-              <label className="topic-select">
-                <span>Topic</span>
-                <select
-                  value={topic.id}
-                  onChange={(event) => resetForTopic(event.target.value as TopicId)}
-                  disabled={!canStart}
-                >
-                  {topics.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {needsAccessCode ? (
-                <label className="access-console">
-                  <span>Access code</span>
-                  <input
-                    type="password"
-                    value={accessCode}
-                    onChange={(event) => setAccessCode(event.target.value)}
-                    placeholder="Private review code"
-                    autoComplete="off"
-                    disabled={!canStart}
-                  />
-                </label>
-              ) : null}
-
-              <div className="question-card">
-                <div className="question-meta">
-                  <span>{topic.title}</span>
-                  <span>Question {Math.min(exam.questionIndex + 1, topic.questions.length)}</span>
-                </div>
-                <p className="transmission-text" aria-live="polite">
-                  {displayPrompt}
-                  <span className="cursor" aria-hidden="true" />
-                </p>
-              </div>
-
-              <label className="answer-console">
-                <span>{activePart === 'follow-up' ? 'Clarification' : 'Your answer'}</span>
-                <textarea
-                  value={activePart === 'follow-up' ? followUpAnswer : mainAnswer}
-                  onChange={(event) =>
-                    activePart === 'follow-up'
-                      ? setFollowUpAnswer(event.target.value)
-                      : setMainAnswer(event.target.value)
-                  }
-                  placeholder="Speak, then clean up the transcript here if needed."
-                  disabled={canStart || exam.phase === 'grading'}
-                />
-              </label>
-
-              <div className="action-row">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={canStart ? () => void startVoiceExam() : submitAnswer}
-                  disabled={exam.phase === 'connecting' || exam.phase === 'grading'}
-                >
-                  {canStart ? <Play size={18} /> : <Send size={18} />}
-                  {primaryLabel}
-                </button>
-                {(isSpeaking || isConnected || isDemoMode) && !canStart ? (
-                  <button type="button" className="secondary" onClick={interruptExaminer}>
-                    <OctagonPause size={18} />
-                    Silence
-                  </button>
-                ) : null}
-              </div>
-
-              <p className="status-line" role="status">
-                {statusMessage}
-              </p>
-              {appError ? <p className="error-line">{appError}</p> : null}
-            </section>
-          </section>
-        ) : (
-          <section className="report-stage">
-            <div className="report-hero">
-              <div>
-                <p className="eyebrow">After-action report</p>
-                <h2>{report?.summary ?? 'The chamber is considering your fate.'}</h2>
-              </div>
-              <div className={`planet-meter ${threatClass}`}>
-                <span>Planet peril</span>
-                <strong>{planetPeril}%</strong>
-                <div>
-                  <i style={{ width: `${planetPeril}%` }} />
-                </div>
-              </div>
-            </div>
-
-            <nav className="view-tabs" aria-label="Report views">
-              <button
-                type="button"
-                className={reportTab === 'scorecard' ? 'active' : ''}
-                onClick={() => setReportTab('scorecard')}
-              >
-                <BadgeCheck size={16} />
-                Scorecard
-              </button>
-              <button
-                type="button"
-                className={reportTab === 'transcript' ? 'active' : ''}
-                onClick={() => setReportTab('transcript')}
-              >
-                <AudioLines size={16} />
-                Transcript
-              </button>
-              <button
-                type="button"
-                className={reportTab === 'metrics' ? 'active' : ''}
-                onClick={() => setReportTab('metrics')}
-              >
-                <TimerReset size={16} />
-                Metrics
-              </button>
-            </nav>
-
-            {reportTab === 'scorecard' && report ? (
-              <div className="scorecard-view">
-                <div className="score">
-                  <strong>
-                    {report.totalScore}/{report.maxScore}
-                  </strong>
-                  <span>
-                    {report.source === 'openai' ? 'Rubric grade' : 'Local heuristic grade'}
-                  </span>
-                </div>
-                <div className="grade-list">
-                  {report.perQuestion.map((grade, index) => (
-                    <article
-                      key={grade.questionId}
-                      className={grade.score === 2 ? 'passed' : grade.score === 1 ? 'mixed' : 'failed'}
-                    >
-                      <div>
-                        <span>Q{index + 1}</span>
-                        <strong>
-                          {grade.score}/{grade.maxScore}
-                        </strong>
-                      </div>
-                      <p>{grade.feedback}</p>
-                    </article>
-                  ))}
-                </div>
-                <h3>Review next</h3>
-                <ul>
-                  {report.reviewSuggestions.map((suggestion) => (
-                    <li key={suggestion}>{suggestion}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {reportTab === 'transcript' ? (
-              <div className="transcript-view">
-                {entries.length === 0 ? (
-                  <p className="empty-state">
-                    Live voice transcripts appear here. Local preview answers are still included
-                    in the scorecard.
-                  </p>
-                ) : (
-                  <ol>
-                    {entries.map((entry) => (
-                      <li key={entry.id} className={entry.role}>
-                        <span>{entry.role}</span>
-                        <p>{entry.text}</p>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            ) : null}
-
-            {reportTab === 'metrics' ? (
-              <div className="metrics-view">
-                <dl>
-                  <div>
-                    <dt>Duration</dt>
-                    <dd>{formatDuration(metrics.durationMs)}</dd>
-                  </div>
-                  <div>
-                    <dt>First response</dt>
-                    <dd>
-                      {metrics.firstResponseLatencyMs === null
-                        ? 'Not observed'
-                        : formatDuration(metrics.firstResponseLatencyMs)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Interruptions</dt>
-                    <dd>{metrics.interruptions}</dd>
-                  </div>
-                  <div>
-                    <dt>Transcript items</dt>
-                    <dd>{metrics.transcriptItems}</dd>
-                  </div>
-                </dl>
-                <div className="method-note">
-                  <Brain size={18} />
-                  <p>
-                    Questions are fixed rubric items. Live mode uses a Realtime model
-                    for short villain reactions and spoken transitions; preview mode
-                    uses local browser speech without spending API credits.
-                  </p>
-                </div>
-              </div>
-            ) : null}
-
-            <button type="button" className="secondary compact" onClick={resetExam}>
-              <Square size={18} />
-              Reset chamber
-            </button>
-          </section>
-        )}
-      </section>
-      )}
-
-      {hasEnteredChamber && !isReportUnlocked ? (
-        <>
-          {!isManualOpen ? (
-            <button
-              type="button"
-              className="manual-toggle"
-              onClick={handleManualToggle}
-              aria-expanded={isManualOpen}
-            >
-              <BookOpen size={18} />
-              Field manual
-            </button>
-          ) : null}
-
-          {isManualOpen ? (
-            <div className="manual-backdrop" role="presentation">
-              <section
-                className="manual-book"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Stolen field manual"
-              >
-                <header className="manual-header">
-                  <div>
-                    <p className="eyebrow">Contraband quantum notes</p>
-                    <h2>Stolen field manual</h2>
-                  </div>
+      {isBoardOpen ? (
+        <div className="sheet-backdrop" role="presentation" onClick={() => setIsBoardOpen(false)}>
+          <section
+            className="sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Scoreboard"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header>
+              <h2>Scoreboard</h2>
+              <div className="segmented mini" role="radiogroup" aria-label="Scoreboard level">
+                {(['curious', 'physicist'] as const).map((option) => (
                   <button
+                    key={option}
                     type="button"
-                    className="manual-close"
-                    onClick={() => setIsManualOpen(false)}
-                    aria-label="Close dossier"
+                    role="radio"
+                    aria-checked={level === option}
+                    className={level === option ? 'active' : ''}
+                    onClick={() => setLevel(option)}
                   >
-                    <X size={18} />
+                    {option === 'curious' ? 'Curious' : 'Physicist'}
                   </button>
-                </header>
-
-                <div className="manual-pages">
-                  {topic.questions.map((question, index) => (
-                    <article
-                      key={question.id}
-                      className={index === exam.questionIndex ? 'manual-page current' : 'manual-page'}
-                    >
-                      <div className="manual-page-heading">
-                        <span>Page {index + 1}</span>
-                        <strong>{index === exam.questionIndex ? 'Current threat' : 'Likely threat'}</strong>
-                      </div>
-                      <p>{question.prompt}</p>
-                      <h3>Nocturne wants</h3>
-                      <ul>
-                        {question.expectedConcepts.map((concept) => (
-                          <li key={concept}>{concept}</li>
-                        ))}
-                      </ul>
-                      <h3>Trap</h3>
-                      <p>{question.commonMisconception}</p>
-                      <details>
-                        <summary>Contraband phrase</summary>
-                        <p>{buildManualPhrase(question)}</p>
-                      </details>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            </div>
-          ) : null}
-        </>
+                ))}
+              </div>
+            </header>
+            {board.enabled ? (
+              <Leaderboard entries={board.entries} isLoading={board.isLoading} />
+            ) : (
+              <p className="board-empty">
+                {board.isLoading ? 'Loading scores…' : 'The global scoreboard is offline. Your best scores are saved on this device.'}
+              </p>
+            )}
+            <button type="button" className="ghost" onClick={() => setIsBoardOpen(false)}>
+              Close
+            </button>
+          </section>
+        </div>
       ) : null}
     </main>
   )

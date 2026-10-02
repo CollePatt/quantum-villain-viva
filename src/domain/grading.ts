@@ -5,12 +5,13 @@ import type {
   QuestionGrade,
   Topic,
 } from './schemas'
+import { findQuestion } from './topics'
 
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
 }
 
-function conceptMatched(answer: string, concept: string): boolean {
+export function conceptMatched(answer: string, concept: string): boolean {
   const normalizedAnswer = normalize(answer)
   const conceptWords = normalize(concept)
     .split(' ')
@@ -30,7 +31,7 @@ export function gradeExamLocally(
   metrics: ExamMetrics,
 ): ExamReport {
   const perQuestion: QuestionGrade[] = turns.map((turn) => {
-    const question = topic.questions.find((candidate) => candidate.id === turn.questionId)
+    const question = findQuestion(topic, turn.questionId)
     const combinedAnswer = `${turn.answer} ${turn.followUpAnswer ?? ''}`.trim()
 
     if (!question) {
@@ -66,10 +67,10 @@ export function gradeExamLocally(
       misconception,
       feedback:
         score === 2
-          ? 'Solid answer. The examiner may sneer, but the rubric is satisfied.'
+          ? 'Nailed the key idea.'
         : score === 1
-            ? 'Partly correct, but the reasoning needs another piece before it clears the chamber.'
-            : 'The answer missed the core physics for this question.',
+            ? 'Half right. One key piece is missing.'
+            : 'Missed the core idea.',
     }
   })
 

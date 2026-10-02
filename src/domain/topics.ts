@@ -1,10 +1,14 @@
-import type { Topic, TopicId } from './schemas'
+import { curiousQuestions } from './curiousQuestions'
+import type { Level, Question, Topic, TopicId } from './schemas'
 
 export const topics: Topic[] = [
   {
     id: 'tunneling',
     title: 'Quantum Tunneling',
     shortName: 'Tunneling',
+    emoji: '👻',
+    tagline: 'Walk through walls',
+    curiousQuestions: curiousQuestions['tunneling'],
     premise:
       'Can the candidate explain why a classically forbidden barrier is not necessarily forbidden to a wavefunction?',
     questions: [
@@ -57,6 +61,9 @@ export const topics: Topic[] = [
     id: 'measurement',
     title: 'Measurement and Collapse',
     shortName: 'Measurement',
+    emoji: '👀',
+    tagline: 'Look, and it changes',
+    curiousQuestions: curiousQuestions['measurement'],
     premise:
       'Can the candidate distinguish states, observables, probabilities, and post-measurement updates?',
     questions: [
@@ -110,6 +117,9 @@ export const topics: Topic[] = [
     id: 'spin',
     title: 'Spin and Stern-Gerlach',
     shortName: 'Spin',
+    emoji: '🧲',
+    tagline: 'Tiny magnets, big weirdness',
+    curiousQuestions: curiousQuestions['spin'],
     premise:
       'Can the candidate reason about two-level spin systems and basis changes?',
     questions: [
@@ -161,7 +171,10 @@ export const topics: Topic[] = [
   {
     id: 'harmonic-oscillator',
     title: 'Quantum Harmonic Oscillator',
-    shortName: 'Oscillator',
+    shortName: 'Energy levels',
+    emoji: '🪜',
+    tagline: 'Quantum leaps',
+    curiousQuestions: curiousQuestions['harmonic-oscillator'],
     premise:
       'Can the candidate connect ladder operators, quantized energy, and zero-point motion?',
     questions: [
@@ -213,6 +226,9 @@ export const topics: Topic[] = [
     id: 'entanglement',
     title: 'Entanglement and Bell States',
     shortName: 'Entanglement',
+    emoji: '🔗',
+    tagline: 'Spooky action',
+    curiousQuestions: curiousQuestions['entanglement'],
     premise:
       'Can the candidate distinguish correlation, entanglement, and faster-than-light signaling?',
     questions: [
@@ -268,4 +284,21 @@ export function getTopicById(id: TopicId): Topic {
     throw new Error(`Unknown topic: ${id}`)
   }
   return topic
+}
+
+export function getQuestionsForLevel(topic: Topic, level: Level): Question[] {
+  return level === 'curious' ? topic.curiousQuestions : topic.questions
+}
+
+// The exam state machine and grader read `questions`, so a round swaps in the
+// question set for the chosen level.
+export function getRoundTopic(id: TopicId, level: Level): Topic {
+  const topic = getTopicById(id)
+  return { ...topic, questions: getQuestionsForLevel(topic, level) }
+}
+
+export function findQuestion(topic: Topic, questionId: string): Question | undefined {
+  return [...topic.questions, ...topic.curiousQuestions].find(
+    (question) => question.id === questionId,
+  )
 }

@@ -13,15 +13,21 @@ export const QuestionSchema = z.object({
   prompt: z.string(),
   expectedConcepts: z.array(z.string()).min(2),
   commonMisconception: z.string(),
-  followUp: z.string(),
+  followUp: z.string().optional(),
+  hint: z.string().optional(),
 })
+
+export const LevelSchema = z.enum(['curious', 'physicist'])
 
 export const TopicSchema = z.object({
   id: TopicIdSchema,
   title: z.string(),
   shortName: z.string(),
+  emoji: z.string(),
+  tagline: z.string(),
   premise: z.string(),
   questions: z.array(QuestionSchema).length(3),
+  curiousQuestions: z.array(QuestionSchema).length(3),
 })
 
 export const ExamTurnSchema = z.object({
@@ -30,6 +36,8 @@ export const ExamTurnSchema = z.object({
   answer: z.string().min(1),
   followUpQuestion: z.string().optional(),
   followUpAnswer: z.string().optional(),
+  secondsUsed: z.number().nonnegative().optional(),
+  usedHint: z.boolean().optional(),
 })
 
 export const ExamMetricsSchema = z.object({
@@ -75,6 +83,7 @@ export const GradeRequestSchema = z.object({
 })
 
 export type TopicId = z.infer<typeof TopicIdSchema>
+export type Level = z.infer<typeof LevelSchema>
 export type Question = z.infer<typeof QuestionSchema>
 export type Topic = z.infer<typeof TopicSchema>
 export type ExamTurn = z.infer<typeof ExamTurnSchema>
