@@ -1,8 +1,10 @@
-# Quantum Villain Viva
+# Quantum Villain
 
-A browser-based quantum mechanics oral exam run by a theatrical villain.
+A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, asks three questions out loud. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
 
-Open the intercepted transmission, choose a topic, answer three questions aloud, and earn your scorecard. The examiner asks at most one follow-up per answer, then reports what you got right, what you missed, and a few simple voice-agent metrics.
+- **Curious** mode asks plain-English questions anyone can try. **Physicist** mode keeps the original oral-exam questions.
+- Points: up to 250 for accuracy and 83 for speed per question (999 max). A hint costs 50.
+- With an OpenAI key, the Observer speaks through OpenAI Realtime (speech-to-speech over WebRTC). Without one, the game still works using the browser's own speech recognition and voice.
 
 ## Live Demo
 
@@ -64,6 +66,13 @@ OPENAI_GRADER_MODEL=gpt-4.1-mini
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_MAX=20
 RATE_LIMIT_WINDOW_MINUTES=60
+```
+
+Scoreboard (run `supabase/leaderboard.sql` once in the Supabase SQL editor first):
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...   # or the legacy service_role key
 ```
 
 Optional:

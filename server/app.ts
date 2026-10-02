@@ -17,7 +17,8 @@ import {
   type ExamTurn,
   type Topic,
 } from '../src/domain/schemas'
-import { getTopicById, topics } from '../src/domain/topics'
+import { findQuestion, getTopicById, topics } from '../src/domain/topics'
+import leaderboardHandler, { signScoreToken, type LeaderboardStore } from '../api/leaderboard'
 import { buildGradingPrompt, buildVillainInstructions } from '../src/lib/examPrompts'
 
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -55,6 +56,7 @@ export type ServerDeps = {
   allowedOrigins?: string[]
   createClientSecret?: CreateClientSecret
   gradeWithOpenAI?: GradeWithOpenAI
+  leaderboardStore?: LeaderboardStore | null
   realtimeModel?: string
   realtimeVoice?: string
   graderModel?: string
@@ -296,7 +298,12 @@ async function defaultGradeWithOpenAI(
         role: 'user',
         content: JSON.stringify(
           {
-            rubric: topic.questions,
+            rubric: turns.flatMap((turn) => {
+              const question = findQuestion(topic, turn.questionId)
+              return question
+                ? [{ ...question, audience: /-c\d+$/.test(question.id) ? 'general' : 'physics student' }]
+                : []
+            }),
             turns,
             requiredShape:
               'Return an ExamReport. Use source "openai", maxScore 6, and preserve measuredBehavior exactly.',
@@ -352,7 +359,7 @@ function realtimeSessionParams(
           transcription: {
             model: 'gpt-transcribe',
             prompt:
-              'Quantum mechanics oral exam answer. Preserve physics vocabulary and symbols when possible.',
+              'Spoken answer in a quantum physics quiz game. Preserve physics vocabulary when possible.',
           },
           turn_detection: {
             type: 'semantic_vad',
@@ -487,21 +494,33 @@ export function createApp(deps: ServerDeps = {}): Express {
       return
     }
 
-    if (!config.hasApiKey) {
-      response.json(gradeExamLocally(topic, parsed.data.turns, parsed.data.metrics))
-      return
-    }
-
+    const { turns, metrics } = parsed.data
     const gradeWithOpenAI =
       deps.gradeWithOpenAI ??
-      ((examTopic: Topic, turns: ExamTurn[], metrics: ExamMetrics) =>
-        defaultGradeWithOpenAI(config.apiKey, config.graderModel, examTopic, turns, metrics))
+      ((examTopic: Topic, examTurns: ExamTurn[], examMetrics: ExamMetrics) =>
+        defaultGradeWithOpenAI(config.apiKey, config.graderModel, examTopic, examTurns, examMetrics))
 
-    try {
-      response.json(await gradeWithOpenAI(topic, parsed.data.turns, parsed.data.metrics))
-    } catch {
-      response.json(gradeExamLocally(topic, parsed.data.turns, parsed.data.metrics))
+    let report: ExamReport
+    if (!config.hasApiKey) {
+      report = gradeExamLocally(topic, turns, metrics)
+    } else {
+      try {
+        report = await gradeWithOpenAI(topic, turns, metrics)
+      } catch {
+        report = gradeExamLocally(topic, turns, metrics)
+      }
     }
+
+    const scoreToken = signScoreToken(
+      report.topicId,
+      turns.map((turn) => turn.questionId),
+      report.perQuestion.map((grade) => grade.score),
+    )
+    response.json(scoreToken ? { ...report, scoreToken } : report)
+  })
+
+  app.all('/api/leaderboard', (request: Request, response: Response) => {
+    void leaderboardHandler(request, response, deps.leaderboardStore)
   })
 
   app.use((_request: Request, response: Response) => {
