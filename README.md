@@ -1,6 +1,6 @@
 # Quantum Villain
 
-A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, asks three questions out loud. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
+A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, opens with one hard "measurement" question. Miss it and you collapse to the Curious tier (fast multiple choice); two right in a row there climbs you back to Physicist. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard for the tier you finish in.
 
 - **Curious** mode asks plain-English questions anyone can try. **Physicist** mode keeps the original oral-exam questions.
 - Points: up to 250 for accuracy and 83 for speed per question (999 max). A hint costs 50.
@@ -16,7 +16,7 @@ The hosted preview runs without secrets: questions are read with browser speech 
 
 - Cinematic transmission intro and animated exam chamber UI.
 - Five quantum mechanics topics: tunneling, measurement, spin, harmonic oscillator, and entanglement.
-- Deterministic three-question exam flow with one follow-up maximum per answer.
+- Four-question adaptive round: each spoken answer is graded as soon as it is locked in (the grade is sealed so the final scoring reuses it), multiple choice grades instantly, and the server replays the tier rules before signing a scoreboard token.
 - Realtime villain reactions that respond to the user's answer before follow-ups or transitions.
 - Stolen field manual overlay with topic-specific survival notes for non-physics testers.
 - Survival, Viva, and Doom protocols for adjustable hint access and follow-up strictness.

@@ -7,9 +7,10 @@ import type {
   ClientSecretCreateResponse,
 } from 'openai/resources/realtime/client-secrets'
 import { z } from 'zod'
-import { gradeExamLocally } from '../src/domain/grading'
+import { gradeChoice, gradeExamLocally } from '../src/domain/grading'
 import {
   ExamReportSchema,
+  QuestionGradeSchema,
   GradeRequestSchema,
   TokenRequestSchema,
   type ExamMetrics,
@@ -18,7 +19,13 @@ import {
   type Topic,
 } from '../src/domain/schemas'
 import { findQuestion, getTopicById, topics } from '../src/domain/topics'
-import leaderboardHandler, { signScoreToken, type LeaderboardStore } from '../api/leaderboard'
+import leaderboardHandler, {
+  isCuriousId,
+  openSeal,
+  sealGrade,
+  signScoreToken,
+  type LeaderboardStore,
+} from '../api/leaderboard'
 import { buildGradingPrompt, buildVillainInstructions } from '../src/lib/examPrompts'
 
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'
@@ -271,6 +278,58 @@ function enforceHostedAccess(
   return { ok: true, isAdmin: access.isAdmin }
 }
 
+// Multiple-choice answers grade instantly. Spoken answers that were already graded
+// mid-round carry a seal, so the same grade is reused. Anything else goes to the grader.
+// Mirrored in api/grade-exam.ts.
+async function gradeRound(
+  topic: Topic,
+  turns: ExamTurn[],
+  metrics: ExamMetrics,
+  gradeSpoken: (pending: ExamTurn[]) => Promise<ExamReport>,
+): Promise<ExamReport> {
+  const known = turns.map((turn) => {
+    const question = findQuestion(topic, turn.questionId)
+    if (question?.choices) {
+      return gradeChoice(question, turn.choiceIndex)
+    }
+    const sealed = turn.seal ? openSeal(turn.seal, topic.id, turn.questionId, turn.answer) : null
+    const parsed = QuestionGradeSchema.safeParse(sealed)
+    return parsed.success ? parsed.data : null
+  })
+
+  const pending = turns.filter((_turn, index) => known[index] === null)
+  let spoken: ExamReport | null = null
+  if (pending.length > 0) {
+    const forGrader = pending.map((turn) => ({ ...turn, seal: undefined, choiceIndex: undefined }))
+    try {
+      spoken = await gradeSpoken(forGrader)
+    } catch {
+      spoken = gradeExamLocally(topic, forGrader, metrics)
+    }
+  }
+
+  const perQuestion = turns.map((turn, index) => {
+    const grade =
+      known[index] ??
+      spoken?.perQuestion.find((candidate) => candidate.questionId === turn.questionId) ??
+      spoken?.perQuestion[pending.indexOf(turn)] ??
+      gradeExamLocally(topic, [turn], metrics).perQuestion[0]
+    return { ...grade, questionId: turn.questionId }
+  })
+
+  return ExamReportSchema.parse({
+    topicId: topic.id,
+    totalScore: perQuestion.reduce((sum, grade) => sum + grade.score, 0),
+    maxScore: turns.length * 2,
+    perQuestion,
+    summary: spoken?.summary ?? '',
+    reviewSuggestions: spoken?.reviewSuggestions ?? [],
+    measuredBehavior: metrics,
+    source: spoken?.source ?? 'local-heuristic',
+    createdAt: new Date().toISOString(),
+  })
+}
+
 async function defaultCreateClientSecret(
   apiKey: string,
   params: ClientSecretCreateParams,
@@ -306,7 +365,7 @@ async function defaultGradeWithOpenAI(
             }),
             turns,
             requiredShape:
-              'Return an ExamReport. Use source "openai", maxScore 6, and preserve measuredBehavior exactly.',
+              `Return an ExamReport. Use source "openai", maxScore ${turns.length * 2}, and preserve measuredBehavior exactly.`,
             measuredBehavior: metrics,
           },
           null,
@@ -327,7 +386,7 @@ async function defaultGradeWithOpenAI(
   return ExamReportSchema.parse({
     ...parsed,
     topicId: topic.id,
-    maxScore: topic.questions.length * 2,
+    maxScore: turns.length * 2,
     measuredBehavior: metrics,
     source: 'openai',
     createdAt: new Date().toISOString(),
@@ -483,7 +542,7 @@ export function createApp(deps: ServerDeps = {}): Express {
   app.post('/api/grade-exam', async (request: Request, response: Response) => {
     const parsed = GradeRequestSchema.safeParse(request.body)
     if (!parsed.success) {
-      sendValidationError(response, 'Expected topicId, one to three turns, and metrics.')
+      sendValidationError(response, 'Expected topicId, one to four turns, and metrics.')
       return
     }
 
@@ -500,23 +559,28 @@ export function createApp(deps: ServerDeps = {}): Express {
       ((examTopic: Topic, examTurns: ExamTurn[], examMetrics: ExamMetrics) =>
         defaultGradeWithOpenAI(config.apiKey, config.graderModel, examTopic, examTurns, examMetrics))
 
-    let report: ExamReport
-    if (!config.hasApiKey) {
-      report = gradeExamLocally(topic, turns, metrics)
-    } else {
-      try {
-        report = await gradeWithOpenAI(topic, turns, metrics)
-      } catch {
-        report = gradeExamLocally(topic, turns, metrics)
-      }
-    }
+    const report = await gradeRound(topic, turns, metrics, (pending) =>
+      config.hasApiKey
+        ? gradeWithOpenAI(topic, pending, metrics)
+        : Promise.resolve(gradeExamLocally(topic, pending, metrics)),
+    )
 
+    const seals: Record<string, string> = {}
+    turns.forEach((turn, index) => {
+      const grade = report.perQuestion[index]
+      const seal = !isCuriousId(turn.questionId) && grade
+        ? sealGrade(topic.id, turn.questionId, turn.answer, grade)
+        : undefined
+      if (seal) {
+        seals[turn.questionId] = seal
+      }
+    })
     const scoreToken = signScoreToken(
       report.topicId,
       turns.map((turn) => turn.questionId),
       report.perQuestion.map((grade) => grade.score),
     )
-    response.json(scoreToken ? { ...report, scoreToken } : report)
+    response.json(scoreToken ? { ...report, seals, scoreToken } : { ...report, seals })
   })
 
   app.all('/api/leaderboard', (request: Request, response: Response) => {

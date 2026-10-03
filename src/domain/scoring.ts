@@ -1,15 +1,17 @@
 import type { Level } from './schemas'
 
 // Mirrored in api/leaderboard.ts, which caps submitted scores with the same numbers.
-export const ACCURACY_POINTS = [0, 125, 250] as const
-export const SPEED_BONUS_MAX = 83
-export const HINT_COST = 50
-export const MAX_POINTS = 3 * (ACCURACY_POINTS[2] + SPEED_BONUS_MAX)
-
-export const TIME_LIMIT_SECONDS: Record<Level, number> = {
-  curious: 40,
-  physicist: 60,
+// Physicist questions are spoken and graded 0-2. Curious questions are multiple choice,
+// so they are either right (2) or wrong (0), and worth less.
+export const TIER_POINTS: Record<
+  Level,
+  { accuracy: readonly [number, number, number]; speedMax: number; hintCost: number; seconds: number }
+> = {
+  physicist: { accuracy: [0, 125, 200], speedMax: 50, hintCost: 50, seconds: 60 },
+  curious: { accuracy: [0, 40, 80], speedMax: 20, hintCost: 25, seconds: 20 },
 }
+
+export const MAX_POINTS = 999
 
 export type TurnPlay = {
   secondsUsed: number
@@ -23,19 +25,16 @@ export type QuestionPoints = {
   total: number
 }
 
-export function questionPoints(
-  rubricScore: number,
-  play: TurnPlay,
-  timeLimitSeconds: number,
-): QuestionPoints {
-  const accuracy = ACCURACY_POINTS[Math.max(0, Math.min(2, Math.round(rubricScore)))]
+export function questionPoints(rubricScore: number, play: TurnPlay, tier: Level): QuestionPoints {
+  const rules = TIER_POINTS[tier]
+  const accuracy = rules.accuracy[Math.max(0, Math.min(2, Math.round(rubricScore)))]
   if (accuracy === 0) {
     return { accuracy: 0, speed: 0, hintPenalty: 0, total: 0 }
   }
 
-  const timeLeft = Math.max(0, Math.min(1, 1 - play.secondsUsed / timeLimitSeconds))
-  const speed = Math.round(SPEED_BONUS_MAX * timeLeft)
-  const hintPenalty = play.usedHint ? HINT_COST : 0
+  const timeLeft = Math.max(0, Math.min(1, 1 - play.secondsUsed / rules.seconds))
+  const speed = Math.round(rules.speedMax * timeLeft)
+  const hintPenalty = play.usedHint ? rules.hintCost : 0
   return {
     accuracy,
     speed,
@@ -44,23 +43,6 @@ export function questionPoints(
   }
 }
 
-export type Rank = {
-  title: string
-  line: string
-}
-
-export function rankFor(points: number): Rank {
-  if (points >= 900) {
-    return { title: 'Quantum Overlord', line: 'The Observer looked away first.' }
-  }
-  if (points >= 700) {
-    return { title: 'Wavefunction Whisperer', line: 'He will pretend this never happened.' }
-  }
-  if (points >= 450) {
-    return { title: 'Superposition Survivor', line: 'Half right, half wrong, fully escaped.' }
-  }
-  if (points >= 200) {
-    return { title: 'Classically Trained', line: 'Newton would be proud. The Observer is not.' }
-  }
-  return { title: 'Collapsed on Contact', line: 'The chamber door stays locked. For now.' }
+export function roundTotal(points: QuestionPoints[]): number {
+  return Math.min(MAX_POINTS, points.reduce((sum, item) => sum + item.total, 0))
 }
