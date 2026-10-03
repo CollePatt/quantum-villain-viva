@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RealtimeItem, RealtimeSession } from '@openai/agents/realtime'
 import './App.css'
+import { gradeChoice, gradeExamLocally, matchChoice } from './domain/grading'
 import {
-  beginExam,
-  createInitialExamState,
-  getCurrentQuestion,
-  markAsking,
-  markQuestionAsked,
-  recordAnswer,
-  type ExamState,
-} from './domain/examState'
-import { conceptMatched, gradeExamLocally } from './domain/grading'
-import type { ExamMetrics, ExamReport, ExamTurn, Level, Topic } from './domain/schemas'
-import { questionPoints, TIME_LIMIT_SECONDS, type TurnPlay } from './domain/scoring'
-import { getRoundTopic, topics } from './domain/topics'
+  advanceTier,
+  describePath,
+  nextQuestion,
+  replayRound,
+  ROUND_LENGTH,
+  START_TIER,
+  tierOfQuestion,
+  type TierEvent,
+  type TierState,
+} from './domain/round'
+import type { ExamMetrics, ExamReport, ExamTurn, Level, Question, QuestionGrade, Topic } from './domain/schemas'
+import { questionPoints, roundTotal, TIER_POINTS, type TurnPlay } from './domain/scoring'
+import { getTopicById, topics } from './domain/topics'
 import { HomeScreen, type TopicChoice } from './components/HomeScreen'
 import { Leaderboard } from './components/Leaderboard'
 import type { ObserverMood } from './components/Observer'
@@ -38,13 +40,25 @@ import {
   buildHintTauntPrompt,
   buildQuestionPrompt,
   buildVillainInstructions,
+  spokenQuestion,
+  type Verdict,
 } from './lib/examPrompts'
 import { speakLocally, stopLocalSpeech } from './lib/localVoice'
 import { extractTranscriptEntries } from './lib/transcript'
 import { villainLines } from './lib/villainLines'
 
 type Screen = 'home' | 'play' | 'results'
-type GradedReport = ExamReport & { scoreToken?: string }
+type Phase = 'idle' | 'answering' | 'judging' | 'done'
+type GradedReport = ExamReport & { scoreToken?: string; seals?: Record<string, string> }
+
+// One locked-in answer, graded the moment it was given.
+type RoundAnswer = {
+  question: Question
+  tier: Level
+  turn: ExamTurn
+  grade: QuestionGrade
+  play: TurnPlay
+}
 
 type TokenResponse = {
   clientSecret: string
@@ -80,10 +94,13 @@ function appendText(existing: string, fresh: string): string {
   return [existing.trim(), fresh.trim()].filter(Boolean).join(' ')
 }
 
-function looksStrong(topic: Topic, questionIndex: number, answer: string): boolean {
-  const question = topic.questions[questionIndex]
-  return question.expectedConcepts.filter((concept) => conceptMatched(answer, concept)).length >= 1
+function verdictFor(score: number): Verdict {
+  return score >= 2 ? 'strong' : score >= 1 ? 'partial' : 'miss'
 }
+
+const LETTERS = ['A', 'B', 'C']
+// A hard answer is graded before the next question, so the wait is capped.
+const JUDGE_TIMEOUT_MS = 8000
 
 function readBests(): Record<string, number> {
   try {
@@ -102,12 +119,16 @@ export default function App() {
     isStaticPreview() ? STATIC_PREVIEW_CONFIG : null,
   )
   const [screen, setScreen] = useState<Screen>('home')
-  const [level, setLevel] = useState<Level>('curious')
+  const [boardLevel, setBoardLevel] = useState<Level>('physicist')
   const [topicChoice, setTopicChoice] = useState<TopicChoice>('random')
-  const [roundTopic, setRoundTopic] = useState<Topic>(() => getRoundTopic('tunneling', 'curious'))
-  const [exam, setExam] = useState<ExamState>(() => createInitialExamState(roundTopic))
+  const [roundTopic, setRoundTopic] = useState<Topic>(() => getTopicById('tunneling'))
+  const [question, setQuestion] = useState<Question>(() => getTopicById('tunneling').questions[0])
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [tierState, setTierState] = useState<TierState>(START_TIER)
+  const [answers, setAnswers] = useState<RoundAnswer[]>([])
+  const [tierBanner, setTierBanner] = useState<TierEvent>(null)
+  const [struckChoice, setStruckChoice] = useState<number | null>(null)
   const [answer, setAnswer] = useState('')
-  const [plays, setPlays] = useState<TurnPlay[]>([])
   const [usedHint, setUsedHint] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [villainLine, setVillainLine] = useState('')
@@ -127,7 +148,11 @@ export default function App() {
   const [bests, setBests] = useState<Record<string, number>>(readBests)
 
   const sessionRef = useRef<RealtimeSession | null>(null)
-  const examRef = useRef(exam)
+  const phaseRef = useRef<Phase>('idle')
+  const questionRef = useRef(question)
+  const tierStateRef = useRef<TierState>(START_TIER)
+  const answersRef = useRef<RoundAnswer[]>([])
+  const roundIdRef = useRef(0)
   const answerRef = useRef(answer)
   const elapsedRef = useRef(0)
   const isSpeakingRef = useRef(false)
@@ -136,20 +161,17 @@ export default function App() {
   const lockingRef = useRef(false)
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
-  const lockInRef = useRef<() => void>(() => undefined)
+  const lockInRef = useRef<(choice?: number) => void>(() => undefined)
   const moodTimerRef = useRef(0)
+  const bannerTimerRef = useRef(0)
 
-  const board = useLeaderboard(level)
+  const board = useLeaderboard(boardLevel)
   const speech = useSpeechRecognition(
     useCallback((text: string) => setAnswer((current) => appendText(current, text)), []),
   )
 
-  const timeLimit = TIME_LIMIT_SECONDS[level]
-  const question = getCurrentQuestion(roundTopic, exam)
-
-  useEffect(() => {
-    examRef.current = exam
-  }, [exam])
+  const tier = tierOfQuestion(question)
+  const timeLimit = TIER_POINTS[tier].seconds
 
   useEffect(() => {
     answerRef.current = answer
@@ -166,7 +188,7 @@ export default function App() {
   // Each screen and question starts at the top, so the eye is always in view.
   useEffect(() => {
     window.scrollTo?.({ top: 0 })
-  }, [screen, exam.questionIndex])
+  }, [screen, question.id])
 
   useEffect(() => {
     let isMounted = true
@@ -191,7 +213,7 @@ export default function App() {
   }, [])
 
   // Question clock. It pauses while the Observer talks, so only thinking time counts.
-  const isAnswering = screen === 'play' && exam.phase === 'answering' && !isConnecting && !isGrading
+  const isAnswering = screen === 'play' && phase === 'answering' && !isConnecting && !isGrading
   useEffect(() => {
     if (!isAnswering) {
       return
@@ -209,11 +231,31 @@ export default function App() {
     return () => window.clearInterval(interval)
   }, [isAnswering, timeLimit])
 
-  function resetQuestionClock() {
+  // A spoken "B" or "the second one" locks in a multiple-choice answer.
+  useEffect(() => {
+    const choices = question.choices
+    if (!choices || phase !== 'answering' || !answer) {
+      return
+    }
+    const picked = matchChoice(answer, choices)
+    if (picked !== null) {
+      lockInRef.current(picked)
+    }
+  }, [answer, question, phase])
+
+  function setPhaseNow(next: Phase) {
+    phaseRef.current = next
+    setPhase(next)
+  }
+
+  function showQuestion(next: Question) {
+    questionRef.current = next
+    setQuestion(next)
     elapsedRef.current = 0
     setElapsed(0)
     graceUntilRef.current = Date.now() + QUESTION_GRACE_MS
     setUsedHint(false)
+    setStruckChoice(null)
     setAnswer('')
     answerRef.current = ''
     setRealtimeDraft('')
@@ -224,6 +266,12 @@ export default function App() {
     window.clearTimeout(moodTimerRef.current)
     setReactionMood(mood)
     moodTimerRef.current = window.setTimeout(() => setReactionMood(null), ms)
+  }
+
+  function flashBanner(event: TierEvent) {
+    window.clearTimeout(bannerTimerRef.current)
+    setTierBanner(event)
+    bannerTimerRef.current = window.setTimeout(() => setTierBanner(null), 2400)
   }
 
   function closeSession() {
@@ -276,17 +324,23 @@ export default function App() {
       topicChoice === 'random'
         ? topics[Math.floor(Math.random() * topics.length)].id
         : topicChoice
-    const topic = getRoundTopic(topicId, level)
+    const topic = getTopicById(topicId)
 
     closeSession()
+    roundIdRef.current += 1
     setRoundTopic(topic)
-    setPlays([])
+    tierStateRef.current = START_TIER
+    setTierState(START_TIER)
+    answersRef.current = []
+    setAnswers([])
+    setTierBanner(null)
     setReport(null)
     setNotice(null)
     setVillainLine('')
     setMetrics({ ...createEmptyMetrics(), sessionStartedAt: new Date().toISOString() })
     sessionStartedAtRef.current = performance.now()
-    resetQuestionClock()
+    showQuestion(topic.questions[0])
+    setPhaseNow('idle')
     setScreen('play')
 
     const useLiveVoice =
@@ -299,17 +353,11 @@ export default function App() {
   }
 
   function askFirstQuestion(topic: Topic, mode: VoiceMode) {
-    const asked = markQuestionAsked(markAsking(beginExam(createInitialExamState(topic))))
-    setExam(asked)
-    examRef.current = asked
-    resetQuestionClock()
+    const first = topic.questions[0]
+    showQuestion(first)
+    setPhaseNow('answering')
     const opener = villainLines.opener()
-    deliver(
-      mode,
-      buildQuestionPrompt(topic.questions[0], 1),
-      opener,
-      `${opener} Question one. ${topic.questions[0].prompt}`,
-    )
+    deliver(mode, buildQuestionPrompt(first, 1, opener), opener, `${opener} ${spokenQuestion(first)}`)
   }
 
   function startLocal(topic: Topic, fallbackNotice?: string) {
@@ -324,7 +372,7 @@ export default function App() {
   async function startRealtime(topic: Topic) {
     setVoiceMode('realtime')
     setIsConnecting(true)
-    setExam(beginExam(createInitialExamState(topic)))
+    const roundId = roundIdRef.current
 
     try {
       const token = await fetchJson<TokenResponse>('/api/realtime-token', {
@@ -395,12 +443,18 @@ export default function App() {
 
       sessionRef.current = session
       await session.connect({ apiKey: token.clientSecret, model: token.realtimeModel })
+      if (roundId !== roundIdRef.current) {
+        session.close()
+        return
+      }
       setIsConnecting(false)
       askFirstQuestion(topic, 'realtime')
     } catch {
       sessionRef.current?.close()
       sessionRef.current = null
-      startLocal(topic, 'Live voice is busy, so the Observer is using your browser’s voice.')
+      if (roundId === roundIdRef.current) {
+        startLocal(topic, 'Live voice is busy, so the Observer is using your browser’s voice.')
+      }
     }
   }
 
@@ -434,15 +488,42 @@ export default function App() {
 
   // ---------- answering ----------
 
-  async function lockIn() {
-    if (lockingRef.current || examRef.current.phase !== 'answering') {
+  // Grades one spoken answer straight away, because the grade decides the player's tier.
+  async function judgeSpoken(turn: ExamTurn): Promise<{ grade: QuestionGrade; seal?: string }> {
+    const local = () => ({ grade: gradeExamLocally(roundTopic, [turn], metrics).perQuestion[0] })
+    if (isStaticPreview()) {
+      return local()
+    }
+    try {
+      const graded = await Promise.race([
+        fetchJson<GradedReport>('/api/grade-exam', {
+          method: 'POST',
+          headers: accessHeaders(accessCode),
+          body: JSON.stringify({ topicId: roundTopic.id, turns: [turn], metrics }),
+        }),
+        wait(JUDGE_TIMEOUT_MS).then(() => {
+          throw new Error('Grading took too long.')
+        }),
+      ])
+      const grade = graded.perQuestion[0]
+      return grade ? { grade, seal: graded.seals?.[turn.questionId] } : local()
+    } catch {
+      return local()
+    }
+  }
+
+  async function lockIn(choice?: number) {
+    if (lockingRef.current || phaseRef.current !== 'answering') {
       return
     }
     lockingRef.current = true
     setIsLocking(true)
+    const roundId = roundIdRef.current
+    const asked = questionRef.current
+    const askedTier = tierOfQuestion(asked)
 
     // Give live transcription a moment to deliver the player's last words.
-    if (voiceMode === 'realtime') {
+    if (voiceMode === 'realtime' && !asked.choices && choice === undefined) {
       const deadline = Date.now() + 3000
       while (transcriptPendingRef.current && Date.now() < deadline) {
         await wait(100)
@@ -451,58 +532,109 @@ export default function App() {
     speech.stop()
     stopLocalSpeech()
 
-    const current = examRef.current
-    const questionIndex = current.questionIndex
-    const answered = question
     const spokenAnswer = answerRef.current.trim()
+    const choiceIndex = asked.choices
+      ? (choice ?? matchChoice(spokenAnswer, asked.choices) ?? undefined)
+      : undefined
+    const answerText =
+      asked.choices && choiceIndex !== undefined
+        ? `${LETTERS[choiceIndex]}. ${asked.choices[choiceIndex]}`
+        : spokenAnswer || 'No answer captured.'
     const play: TurnPlay = { secondsUsed: Math.round(elapsedRef.current * 10) / 10, usedHint }
-    const nextPlays = [...plays, play]
-    setPlays(nextPlays)
+    const turn: ExamTurn = {
+      questionId: asked.id,
+      question: asked.prompt,
+      answer: answerText,
+      choiceIndex,
+      ...play,
+    }
 
-    const recorded = recordAnswer(roundTopic, current, spokenAnswer || 'No answer captured.')
-    const turns = recorded.completedTurns.map((turn, index) => ({ ...turn, ...nextPlays[index] }))
-    const strong = looksStrong(roundTopic, questionIndex, spokenAnswer)
-    const reaction = villainLines.reaction(strong)
-    flashMood(strong ? 'impressed' : spokenAnswer ? 'smug' : 'angry', 2800)
-
-    if (recorded.phase === 'grading') {
-      setExam(recorded)
-      examRef.current = recorded
-      deliver(
-        voiceMode,
-        buildFinalAnswerPrompt(answered, spokenAnswer),
-        villainLines.final,
-        `${reaction} ${villainLines.final}`,
-      )
-      lockingRef.current = false
-      setIsLocking(false)
-      await grade(turns, nextPlays)
+    setPhaseNow('judging')
+    let graded: { grade: QuestionGrade; seal?: string }
+    if (asked.choices) {
+      graded = { grade: gradeChoice(asked, choiceIndex) }
+    } else {
+      setVillainLine(villainLines.measuring)
+      graded = await judgeSpoken(turn)
+    }
+    lockingRef.current = false
+    setIsLocking(false)
+    if (roundId !== roundIdRef.current) {
       return
     }
 
-    const next = markQuestionAsked(recorded)
-    const nextQuestion = getCurrentQuestion(roundTopic, next)
-    setExam(next)
-    examRef.current = next
-    resetQuestionClock()
-    lockingRef.current = false
-    setIsLocking(false)
+    const isLast = answersRef.current.length + 1 >= ROUND_LENGTH
+    const { state: nextTier, event } = advanceTier(tierStateRef.current, graded.grade.score, isLast)
+    const record: RoundAnswer = {
+      question: asked,
+      tier: askedTier,
+      turn: { ...turn, seal: graded.seal },
+      grade: graded.grade,
+      play,
+    }
+    const nextAnswers = [...answersRef.current, record]
+    answersRef.current = nextAnswers
+    setAnswers(nextAnswers)
+    tierStateRef.current = nextTier
+    setTierState(nextTier)
+
+    const score = graded.grade.score
+    const isFirst = nextAnswers.length === 1
+    const line =
+      event === 'collapsed' || event === 'promoted' || event === 'too-late' || (event === 'survived' && isFirst)
+        ? villainLines.tier(event)
+        : villainLines.reaction(score >= 2)
+    if (event === 'collapsed') {
+      flashMood('rolling', 2600)
+      flashBanner('collapsed')
+    } else if (event === 'promoted') {
+      flashMood('suspicious', 2600)
+      flashBanner('promoted')
+    } else {
+      flashMood(score >= 2 ? 'impressed' : score >= 1 ? 'smug' : spokenAnswer || choiceIndex !== undefined ? 'smug' : 'angry', 2400)
+    }
+    const verdict = verdictFor(score)
+
+    if (isLast) {
+      setPhaseNow('done')
+      deliver(
+        voiceMode,
+        buildFinalAnswerPrompt(asked, answerText, verdict, line),
+        line,
+        `${line} ${villainLines.final}`,
+      )
+      await finish(nextAnswers, nextTier.tier, roundId)
+      return
+    }
+
+    const upcoming = nextQuestion(
+      roundTopic,
+      nextTier.tier,
+      nextAnswers.map((item) => item.question.id),
+    )
+    showQuestion(upcoming)
+    setPhaseNow('answering')
     deliver(
       voiceMode,
-      buildAnswerTransitionPrompt(answered, spokenAnswer, nextQuestion, next.questionIndex + 1),
-      reaction,
-      `${reaction} Question ${next.questionIndex + 1}. ${nextQuestion.prompt}`,
+      buildAnswerTransitionPrompt(asked, answerText, verdict, line, upcoming, nextAnswers.length + 1),
+      line,
+      `${line} ${spokenQuestion(upcoming)}`,
     )
   }
   useEffect(() => {
-    lockInRef.current = () => void lockIn()
+    lockInRef.current = (choice?: number) => void lockIn(choice)
   })
 
   function takeHint() {
-    if (usedHint) {
+    if (usedHint || phaseRef.current !== 'answering') {
       return
     }
     setUsedHint(true)
+    const current = questionRef.current
+    if (current.choices) {
+      const wrong = current.choices.map((_, index) => index).filter((index) => index !== current.answer)
+      setStruckChoice(wrong[Math.floor(Math.random() * wrong.length)])
+    }
     flashMood('smug', 2000)
     const taunt = villainLines.hint()
     if (voiceMode === 'realtime' && sessionRef.current) {
@@ -522,9 +654,11 @@ export default function App() {
     speech.start()
   }
 
-  // ---------- grading ----------
+  // ---------- results ----------
 
-  async function grade(turns: ExamTurn[], finalPlays: TurnPlay[]) {
+  // Every answer already has a grade. The server re-checks them (reusing sealed grades)
+  // and signs the scoreboard token.
+  async function finish(finalAnswers: RoundAnswer[], finalTier: Level, roundId: number) {
     setIsGrading(true)
     const finalMetrics: ExamMetrics = {
       ...metrics,
@@ -534,18 +668,30 @@ export default function App() {
     }
     setMetrics(finalMetrics)
 
-    let graded: GradedReport
-    try {
-      if (isStaticPreview()) {
-        throw new Error('No API in the static preview.')
+    const turns = finalAnswers.map((item) => item.turn)
+    const local: GradedReport = {
+      ...gradeExamLocally(roundTopic, [], finalMetrics),
+      totalScore: finalAnswers.reduce((sum, item) => sum + item.grade.score, 0),
+      maxScore: finalAnswers.length * 2,
+      perQuestion: finalAnswers.map((item) => item.grade),
+    }
+    let graded: GradedReport = local
+    if (!isStaticPreview()) {
+      try {
+        const checked = await fetchJson<GradedReport>('/api/grade-exam', {
+          method: 'POST',
+          headers: accessHeaders(accessCode),
+          body: JSON.stringify({ topicId: roundTopic.id, turns, metrics: finalMetrics }),
+        })
+        // Only take the server's grades if they tell the same tier story the player just saw.
+        const serverTier = replayRound(
+          turns.map((turn) => turn.questionId),
+          checked.perQuestion.map((grade) => grade.score),
+        )
+        graded = serverTier === finalTier ? checked : local
+      } catch {
+        graded = local
       }
-      graded = await fetchJson<GradedReport>('/api/grade-exam', {
-        method: 'POST',
-        headers: accessHeaders(accessCode),
-        body: JSON.stringify({ topicId: roundTopic.id, turns, metrics: finalMetrics }),
-      })
-    } catch {
-      graded = gradeExamLocally(roundTopic, turns, finalMetrics)
     }
 
     // Let the Observer finish his last line before the results replace the screen.
@@ -553,9 +699,12 @@ export default function App() {
     while (isSpeakingRef.current && Date.now() < deadline) {
       await wait(150)
     }
+    if (roundId !== roundIdRef.current) {
+      return
+    }
 
-    const total = scoreQuestions(graded, finalPlays).reduce((sum, item) => sum + item.points.total, 0)
-    const bestKey = `${level}:${roundTopic.id}`
+    const total = roundTotal(scoreQuestions(graded, finalAnswers).map((item) => item.points))
+    const bestKey = `${finalTier}:${roundTopic.id}`
     if (total > (bests[bestKey] ?? -1)) {
       const nextBests = { ...bests, [bestKey]: total }
       setBests(nextBests)
@@ -564,30 +713,35 @@ export default function App() {
 
     closeSession()
     setReport(graded)
+    setBoardLevel(finalTier)
     setIsGrading(false)
     setScreen('results')
-    void board.refresh()
   }
 
-  function scoreQuestions(graded: ExamReport, finalPlays: TurnPlay[]): ScoredQuestion[] {
-    return roundTopic.questions.map((roundQuestion, index) => {
+  function scoreQuestions(graded: ExamReport, finalAnswers: RoundAnswer[]): ScoredQuestion[] {
+    return finalAnswers.map((item, index) => {
       const grade =
-        graded.perQuestion.find((candidate) => candidate.questionId === roundQuestion.id) ??
-        graded.perQuestion[index]
-      const play = finalPlays[index] ?? { secondsUsed: timeLimit, usedHint: false }
-      const rubricScore = grade?.score ?? 0
+        graded.perQuestion.find((candidate) => candidate.questionId === item.question.id) ??
+        graded.perQuestion[index] ??
+        item.grade
       return {
-        prompt: roundQuestion.prompt,
-        rubricScore,
-        feedback: grade?.feedback ?? 'No answer recorded.',
-        missing: grade?.missingIdeas ?? [],
-        points: questionPoints(rubricScore, play, timeLimit),
+        prompt: item.question.prompt,
+        tier: item.tier,
+        rubricScore: grade.score,
+        feedback: grade.feedback,
+        missing: grade.missingIdeas,
+        points: questionPoints(grade.score, item.play, item.tier),
       }
     })
   }
 
-  const scored = report ? scoreQuestions(report, plays) : []
-  const totalPoints = scored.reduce((sum, item) => sum + item.points.total, 0)
+  const scored = report ? scoreQuestions(report, answers) : []
+  const totalPoints = roundTotal(scored.map((item) => item.points))
+  const finalTier = tierState.tier
+  const path = describePath(
+    answers.map((item) => item.tier),
+    finalTier,
+  )
 
   async function submitScore(name: string) {
     if (!report?.scoreToken) {
@@ -600,8 +754,11 @@ export default function App() {
   }
 
   function quit() {
+    roundIdRef.current += 1
     closeSession()
-    setExam(createInitialExamState(roundTopic))
+    lockingRef.current = false
+    setIsLocking(false)
+    setPhaseNow('idle')
     setIsConnecting(false)
     setIsGrading(false)
     setScreen('home')
@@ -622,8 +779,6 @@ export default function App() {
 
       {screen === 'home' ? (
         <HomeScreen
-          level={level}
-          onLevelChange={setLevel}
           topicChoice={topicChoice}
           onTopicChange={setTopicChoice}
           needsAccessCode={Boolean(config?.requiresAccessCode)}
@@ -640,9 +795,12 @@ export default function App() {
 
       {screen === 'play' ? (
         <PlayScreen
-          topic={roundTopic}
           question={question}
-          questionIndex={exam.questionIndex}
+          questionIndex={answers.length}
+          tier={tier}
+          streak={tierState.tier === 'curious' ? tierState.streak : 0}
+          askedTiers={[...answers.map((item) => item.tier), tier]}
+          tierBanner={tierBanner}
           timeLimit={timeLimit}
           elapsed={elapsed}
           answer={answer}
@@ -659,10 +817,13 @@ export default function App() {
           micError={speech.error}
           villainLine={villainLine}
           usedHint={usedHint}
+          struckChoice={struckChoice}
           onHint={takeHint}
           isLocking={isLocking}
+          isJudging={phase === 'judging' && !isGrading}
           isGrading={isGrading}
           onLockIn={() => void lockIn()}
+          onChoose={(index) => void lockIn(index)}
           onQuit={quit}
           notice={notice}
         />
@@ -671,7 +832,8 @@ export default function App() {
       {screen === 'results' && report ? (
         <ResultsScreen
           topic={roundTopic}
-          level={level}
+          tier={finalTier}
+          path={path}
           report={report}
           totalPoints={totalPoints}
           questions={scored}
@@ -679,7 +841,7 @@ export default function App() {
           boardEnabled={board.enabled}
           boardEntries={board.entries}
           boardLoading={board.isLoading}
-          personalBest={bests[`${level}:${roundTopic.id}`] ?? null}
+          personalBest={bests[`${finalTier}:${roundTopic.id}`] ?? null}
           voiceSummary={voiceSummary}
           onSubmitScore={submitScore}
           onPlayAgain={startRound}
@@ -698,15 +860,15 @@ export default function App() {
           >
             <header>
               <h2>Scoreboard</h2>
-              <div className="segmented mini" role="radiogroup" aria-label="Scoreboard level">
-                {(['curious', 'physicist'] as const).map((option) => (
+              <div className="segmented mini" role="radiogroup" aria-label="Scoreboard tier">
+                {(['physicist', 'curious'] as const).map((option) => (
                   <button
                     key={option}
                     type="button"
                     role="radio"
-                    aria-checked={level === option}
-                    className={level === option ? 'active' : ''}
-                    onClick={() => setLevel(option)}
+                    aria-checked={boardLevel === option}
+                    className={boardLevel === option ? 'active' : ''}
+                    onClick={() => setBoardLevel(option)}
                   >
                     {option === 'curious' ? 'Curious' : 'Physicist'}
                   </button>

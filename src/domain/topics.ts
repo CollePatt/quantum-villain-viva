@@ -1,5 +1,5 @@
 import { curiousQuestions } from './curiousQuestions'
-import type { Level, Question, Topic, TopicId } from './schemas'
+import type { Question, Topic, TopicId } from './schemas'
 
 export const topics: Topic[] = [
   {
@@ -54,6 +54,20 @@ export const topics: Topic[] = [
           'Giving an example with no actual classically forbidden barrier.',
         followUp:
           'Where exactly is the barrier in your example, and what crosses it?',
+      },
+      {
+        id: 'tunneling-4',
+        prompt:
+          'Alpha decay is a tunneling process. Why do half-lives range from microseconds to billions of years?',
+        expectedConcepts: [
+          'alpha particle tunnels through the Coulomb barrier',
+          'tunneling probability is exponentially sensitive to energy and barrier width',
+          'small changes in decay energy give enormous changes in half-life',
+        ],
+        commonMisconception:
+          'Thinking the alpha particle eventually gains enough energy to escape over the barrier.',
+        followUp:
+          'How sensitive is the tunneling rate to the decay energy? Linear, or something worse?',
       },
     ],
   },
@@ -111,6 +125,21 @@ export const topics: Topic[] = [
         followUp:
           'What mathematical relation between observables captures this incompatibility?',
       },
+      {
+        id: 'measurement-4',
+        prompt:
+          'What is the difference between a superposition and a classical mixture of the same two states?',
+        expectedConcepts: [
+          'superposition has definite relative phase and is coherent',
+          'superposition can show interference while a mixture cannot',
+          'mixture describes ignorance about which state the system is in',
+          'off-diagonal density matrix terms or coherences',
+        ],
+        commonMisconception:
+          'Saying a superposition just means we do not know which state it is really in.',
+        followUp:
+          'What experiment would tell the two apart?',
+      },
     ],
   },
   {
@@ -166,6 +195,20 @@ export const topics: Topic[] = [
         followUp:
           'Why did a split into discrete spots matter?',
       },
+      {
+        id: 'spin-4',
+        prompt:
+          'Why does a spin one-half state need a 720-degree rotation to come back to itself?',
+        expectedConcepts: [
+          'a 360-degree rotation multiplies the spinor by minus one',
+          'the sign change is a phase that shows up in interference experiments',
+          'spinors transform under SU(2), a double cover of ordinary rotations',
+        ],
+        commonMisconception:
+          'Claiming the electron is physically spinning twice as fast.',
+        followUp:
+          'If the minus sign is a global phase, how could anyone ever detect it?',
+      },
     ],
   },
   {
@@ -219,6 +262,20 @@ export const topics: Topic[] = [
           'Explaining zero-point energy as thermal motion.',
         followUp:
           'Would zero-point energy vanish at absolute zero, and why?',
+      },
+      {
+        id: 'oscillator-4',
+        prompt:
+          'Why does the harmonic oscillator show up as a model in so many different physical systems?',
+        expectedConcepts: [
+          'any smooth potential is approximately quadratic near a minimum',
+          'small oscillations about equilibrium are harmonic',
+          'examples like molecular vibrations, phonons, or modes of the electromagnetic field',
+        ],
+        commonMisconception:
+          'Saying it is because springs are common in nature.',
+        followUp:
+          'What happens to a general potential if you Taylor expand it around its minimum?',
       },
     ],
   },
@@ -274,6 +331,21 @@ export const topics: Topic[] = [
         followUp:
           'What would the distant observer see before comparing notes classically?',
       },
+      {
+        id: 'entanglement-4',
+        prompt:
+          'What is quantum teleportation, and why does it not send anything faster than light?',
+        expectedConcepts: [
+          'transfers an unknown quantum state using shared entanglement',
+          'requires a Bell measurement and sending two classical bits',
+          'the classical channel limits the speed',
+          'the original state is destroyed, consistent with no cloning',
+        ],
+        commonMisconception:
+          'Thinking the particle itself physically jumps to the other location instantly.',
+        followUp:
+          'What does the receiver have before the classical bits arrive?',
+      },
     ],
   },
 ]
@@ -284,17 +356,6 @@ export function getTopicById(id: TopicId): Topic {
     throw new Error(`Unknown topic: ${id}`)
   }
   return topic
-}
-
-export function getQuestionsForLevel(topic: Topic, level: Level): Question[] {
-  return level === 'curious' ? topic.curiousQuestions : topic.questions
-}
-
-// The exam state machine and grader read `questions`, so a round swaps in the
-// question set for the chosen level.
-export function getRoundTopic(id: TopicId, level: Level): Topic {
-  const topic = getTopicById(id)
-  return { ...topic, questions: getQuestionsForLevel(topic, level) }
 }
 
 export function findQuestion(topic: Topic, questionId: string): Question | undefined {

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const TOPICS = [
@@ -42,6 +42,18 @@ const TOPICS = [
         ],
         commonMisconception:
           'Giving an example with no actual classically forbidden barrier.',
+      },
+      {
+        id: 'tunneling-4',
+        prompt:
+          'Alpha decay is a tunneling process. Why do half-lives range from microseconds to billions of years?',
+        expectedConcepts: [
+          'alpha particle tunnels through the Coulomb barrier',
+          'tunneling probability is exponentially sensitive to energy and barrier width',
+          'small changes in decay energy give enormous changes in half-life',
+        ],
+        commonMisconception:
+          'Thinking the alpha particle eventually gains enough energy to escape over the barrier.',
       },
     ],
   },
@@ -87,6 +99,19 @@ const TOPICS = [
         commonMisconception:
           'Blaming only clumsy instruments or experimental noise.',
       },
+      {
+        id: 'measurement-4',
+        prompt:
+          'What is the difference between a superposition and a classical mixture of the same two states?',
+        expectedConcepts: [
+          'superposition has definite relative phase and is coherent',
+          'superposition can show interference while a mixture cannot',
+          'mixture describes ignorance about which state the system is in',
+          'off-diagonal density matrix terms or coherences',
+        ],
+        commonMisconception:
+          'Saying a superposition just means we do not know which state it is really in.',
+      },
     ],
   },
   {
@@ -130,6 +155,18 @@ const TOPICS = [
         commonMisconception:
           'Describing the result as a continuous classical deflection pattern.',
       },
+      {
+        id: 'spin-4',
+        prompt:
+          'Why does a spin one-half state need a 720-degree rotation to come back to itself?',
+        expectedConcepts: [
+          'a 360-degree rotation multiplies the spinor by minus one',
+          'the sign change is a phase that shows up in interference experiments',
+          'spinors transform under SU(2), a double cover of ordinary rotations',
+        ],
+        commonMisconception:
+          'Claiming the electron is physically spinning twice as fast.',
+      },
     ],
   },
   {
@@ -171,6 +208,18 @@ const TOPICS = [
         ],
         commonMisconception:
           'Explaining zero-point energy as thermal motion.',
+      },
+      {
+        id: 'oscillator-4',
+        prompt:
+          'Why does the harmonic oscillator show up as a model in so many different physical systems?',
+        expectedConcepts: [
+          'any smooth potential is approximately quadratic near a minimum',
+          'small oscillations about equilibrium are harmonic',
+          'examples like molecular vibrations, phonons, or modes of the electromagnetic field',
+        ],
+        commonMisconception:
+          'Saying it is because springs are common in nature.',
       },
     ],
   },
@@ -214,6 +263,19 @@ const TOPICS = [
         commonMisconception:
           'Assuming instantaneous correlation is the same as sending information.',
       },
+      {
+        id: 'entanglement-4',
+        prompt:
+          'What is quantum teleportation, and why does it not send anything faster than light?',
+        expectedConcepts: [
+          'transfers an unknown quantum state using shared entanglement',
+          'requires a Bell measurement and sending two classical bits',
+          'the classical channel limits the speed',
+          'the original state is destroyed, consistent with no cloning',
+        ],
+        commonMisconception:
+          'Thinking the particle itself physically jumps to the other location instantly.',
+      },
     ],
   },
 ] as const
@@ -222,156 +284,122 @@ const TOPICS = [
 const CURIOUS_QUESTIONS: Question[] = [
   {
     id: 'tunneling-c1',
-    prompt: "How can a tiny particle get through a wall it doesn't have enough energy to climb over?",
-    expectedConcepts: [
-      'particle behaves like a spread out wave',
-      'wave leaks into and through the barrier',
-      'small chance of appearing on the other side',
-    ],
-    commonMisconception: 'It smashes through the wall or borrows energy to jump over it.',
+    prompt: "A particle hits a wall it doesn't have the energy to climb. How can it still end up on the other side?",
+    choices: ['It borrows energy for a moment', 'Its wave leaks through the wall', 'It slips between the atoms'],
+    answer: 1,
+    expectedConcepts: ['particle behaves like a spread out wave', 'wave leaks into and through the barrier'],
+    commonMisconception: 'It borrows energy to jump over the wall.',
   },
   {
     id: 'tunneling-c2',
-    prompt: 'Does a thicker wall make tunneling more likely or less likely? By a little, or a lot?',
-    expectedConcepts: [
-      'thicker barrier makes tunneling less likely',
-      'chance drops very quickly, exponentially',
-      'taller barrier also lowers the chance',
-    ],
+    prompt: 'Make the wall twice as thick. What happens to the chance of getting through?',
+    choices: ['It halves', 'It barely changes', 'It drops off a cliff'],
+    answer: 2,
+    expectedConcepts: ['thicker barrier makes tunneling less likely', 'chance drops exponentially'],
     commonMisconception: 'Doubling the thickness only halves the chance.',
   },
   {
     id: 'tunneling-c3',
-    prompt: 'Name something in the real world that only works because of tunneling.',
-    expectedConcepts: [
-      'nuclear fusion in stars, radioactive decay, flash memory, or tunneling microscopes',
-      'particles crossing an energy barrier',
-      'would be impossible in classical physics',
-    ],
-    commonMisconception: 'Naming something with no barrier to cross.',
+    prompt: 'Which of these only works because of tunneling?',
+    choices: ['The Sun shining', 'A rainbow', 'A fridge magnet'],
+    answer: 0,
+    expectedConcepts: ['fusion in stars needs particles to tunnel', 'particles crossing an energy barrier'],
+    commonMisconception: 'Picking something with no barrier to cross.',
   },
   {
     id: 'measurement-c1',
-    prompt: "What is the point of Schrödinger's cat, the one that's alive and dead at the same time?",
-    expectedConcepts: [
-      'quantum systems can be in a superposition of states',
-      'measuring or looking gives one definite result',
-      'shows how strange quantum rules look on everyday objects',
-    ],
+    prompt: "What is Schrödinger's cat actually about?",
+    choices: ['Cats are secretly quantum', 'Superposition until you look', 'Why boxes are dangerous'],
+    answer: 1,
+    expectedConcepts: ['quantum systems can be in a superposition', 'looking gives one definite result'],
     commonMisconception: 'That cats are literally half alive.',
   },
   {
     id: 'measurement-c2',
-    prompt: 'You measure a quantum particle, then instantly measure it again the same way. What happens?',
-    expectedConcepts: [
-      'you get the same result again',
-      'the first measurement already settled the state',
-      'randomness only shows up the first time',
-    ],
+    prompt: 'You measure a particle, then instantly measure it again the same way. You get…',
+    choices: ['A fresh random result', 'Nothing at all', 'The same result'],
+    answer: 2,
+    expectedConcepts: ['you get the same result again', 'the first measurement settled the state'],
     commonMisconception: 'Every measurement is a fresh coin flip.',
   },
   {
     id: 'measurement-c3',
-    prompt: "Why can't you know exactly where a particle is and exactly how fast it's going?",
-    expectedConcepts: [
-      'uncertainty principle',
-      'pinning down position spreads out momentum',
-      'a property of nature, not bad equipment',
-    ],
+    prompt: "Why can't you know a particle's exact position and exact speed at the same time?",
+    choices: ["Our tools aren't good enough", 'Nature does not allow it', 'It moves too fast to see'],
+    answer: 1,
+    expectedConcepts: ['uncertainty principle', 'a property of nature, not bad equipment'],
     commonMisconception: 'Our instruments just are not good enough yet.',
   },
   {
     id: 'spin-c1',
     prompt: "Electrons have 'spin'. Is an electron literally a tiny spinning ball?",
-    expectedConcepts: [
-      'not literally spinning',
-      'built in quantum angular momentum',
-      'behaves like a tiny magnet',
-      'measured as only up or down',
-    ],
+    choices: ['No, spin is a built-in property', 'Yes, it rotates very fast', 'Only while someone watches'],
+    answer: 0,
+    expectedConcepts: ['not literally spinning', 'built in quantum angular momentum'],
     commonMisconception: 'Yes, it is a ball rotating on an axis.',
   },
   {
     id: 'spin-c2',
-    prompt: "When you measure an electron's spin, how many different answers can you get?",
-    expectedConcepts: [
-      'only two results, up or down',
-      'spin is quantized, not continuous',
-      'which one you get can be random',
-    ],
+    prompt: "Measure an electron's spin along one direction. How many different results can you get?",
+    choices: ['Any angle at all', 'Two', 'Three'],
+    answer: 1,
+    expectedConcepts: ['only two results, up or down', 'spin is quantized'],
     commonMisconception: 'Any angle at all, like a compass needle.',
   },
   {
     id: 'spin-c3',
-    prompt: "Quantum computers use 'qubits'. How is a qubit different from a normal bit?",
-    expectedConcepts: [
-      'normal bit is either zero or one',
-      'qubit can be in a superposition of zero and one',
-      'measuring a qubit gives zero or one with some probability',
-      'qubits can be entangled with each other',
-    ],
+    prompt: 'Quantum computers use qubits. How is a qubit different from a normal bit?',
+    choices: ['It is just a faster bit', 'It stores a million bits', 'It can be a mix of 0 and 1'],
+    answer: 2,
+    expectedConcepts: ['qubit can be in a superposition of zero and one', 'measuring gives zero or one'],
     commonMisconception: 'A qubit just stores lots of bits at once.',
   },
   {
     id: 'oscillator-c1',
-    prompt: 'Why do glowing atoms only give off certain colors of light instead of every color?',
-    expectedConcepts: [
-      'electrons only have certain allowed energy levels',
-      'jumping between levels releases a specific energy',
-      'that energy matches one color or frequency of light',
-    ],
+    prompt: 'Why do glowing atoms give off only certain colors of light?',
+    choices: ['Energy comes in fixed steps', 'Atoms prefer warm colors', 'The air absorbs the rest'],
+    answer: 0,
+    expectedConcepts: ['electrons only have certain energy levels', 'each jump releases one color'],
     commonMisconception: 'Atoms just happen to prefer some colors.',
   },
   {
     id: 'oscillator-c2',
-    prompt: 'Can a quantum object ever sit perfectly still with zero energy? Why or why not?',
-    expectedConcepts: [
-      'never perfectly still',
-      'zero point energy remains',
-      'uncertainty principle forbids exact position and momentum',
-    ],
+    prompt: 'Can a quantum object ever sit perfectly still with zero energy?',
+    choices: ['Yes, at absolute zero', 'Only in a vacuum', 'No, some energy always remains'],
+    answer: 2,
+    expectedConcepts: ['never perfectly still', 'zero point energy remains'],
     commonMisconception: 'Yes, at absolute zero everything stops.',
   },
   {
     id: 'oscillator-c3',
-    prompt: "What does 'quantum' in 'quantum leap' actually mean?",
-    expectedConcepts: [
-      'energy comes in discrete chunks',
-      'packets called quanta',
-      'a quantum leap is actually tiny, not huge',
-      'jumping between levels with nothing in between',
-    ],
+    prompt: "In physics, how big is a 'quantum leap'?",
+    choices: ['Enormous', 'Tiny', 'Depends on the slide deck'],
+    answer: 1,
+    expectedConcepts: ['energy comes in discrete chunks', 'a quantum leap is tiny'],
     commonMisconception: 'A huge, dramatic change.',
   },
   {
     id: 'entanglement-c1',
-    prompt: "Einstein called entanglement 'spooky action at a distance'. What is entanglement?",
-    expectedConcepts: [
-      'two particles share one joint quantum state',
-      'measuring one is correlated with the other',
-      'correlation holds even when far apart',
-    ],
+    prompt: "Einstein called entanglement 'spooky action at a distance'. What is it?",
+    choices: ['Two particles sharing one state', 'Particles sending secret signals', 'Particles stuck together'],
+    answer: 0,
+    expectedConcepts: ['two particles share one joint quantum state', 'measurements are correlated'],
     commonMisconception: 'One particle sends a signal to the other.',
   },
   {
     id: 'entanglement-c2',
-    prompt: 'Could you use entangled particles to text a friend on Mars instantly?',
-    expectedConcepts: [
-      'no faster than light messaging',
-      'each side only sees random results',
-      'need a normal signal to compare results',
-    ],
+    prompt: 'Could entangled particles let you text a friend on Mars instantly?',
+    choices: ['Yes, instantly', 'Yes, but only one bit', 'No, no message gets through'],
+    answer: 2,
+    expectedConcepts: ['no faster than light messaging', 'each side only sees random results'],
     commonMisconception: 'Yes, flip one and the other flips instantly.',
   },
   {
     id: 'entanglement-c3',
-    prompt: 'Name one real technology that uses entanglement, and what it does.',
-    expectedConcepts: [
-      'quantum cryptography or quantum key distribution',
-      'quantum computers linking qubits',
-      'quantum teleportation of states',
-      'detects eavesdroppers on a channel',
-    ],
+    prompt: 'Which technology actually uses entanglement?',
+    choices: ['Faster-than-light internet', 'Quantum encryption', 'Wireless charging'],
+    answer: 1,
+    expectedConcepts: ['quantum key distribution', 'detects eavesdroppers on a channel'],
     commonMisconception: 'Faster-than-light internet.',
   },
 ]
@@ -391,6 +419,8 @@ type Question = {
   prompt: string
   expectedConcepts: readonly string[]
   commonMisconception: string
+  choices?: readonly string[]
+  answer?: number
 }
 type TopicId = Topic['id']
 
@@ -400,6 +430,10 @@ type ExamTurn = {
   answer: string
   followUpQuestion?: string
   followUpAnswer?: string
+  secondsUsed?: number
+  usedHint?: boolean
+  choiceIndex?: number
+  seal?: string
 }
 
 type ExamMetrics = {
@@ -475,7 +509,7 @@ export default async function handler(request: IncomingMessage, response: Server
 
   const requestBody = parseGradeRequest(body)
   if (!requestBody) {
-    sendValidationError(response, 'Expected topicId, one to three turns, and metrics.')
+    sendValidationError(response, 'Expected topicId, one to four turns, and metrics.')
     return
   }
 
@@ -487,18 +521,80 @@ export default async function handler(request: IncomingMessage, response: Server
   }
 
   const { turns, metrics } = requestBody
-  let report: ExamReport
-  if (!config.hasApiKey) {
-    report = gradeExamLocally(topic, turns, metrics)
-  } else {
+  const report = await gradeRound(topic, turns, metrics, (pending) =>
+    config.hasApiKey
+      ? gradeWithOpenAI(config.apiKey, config.graderModel, topic, pending, metrics)
+      : Promise.resolve(gradeExamLocally(topic, pending, metrics)),
+  )
+
+  sendJson(response, 200, withScoreToken(report, turns))
+}
+
+// Multiple-choice answers grade instantly. Spoken answers that were already graded
+// mid-round carry a seal, so the same grade is reused. Anything else goes to the grader.
+async function gradeRound(
+  topic: Topic,
+  turns: ExamTurn[],
+  metrics: ExamMetrics,
+  gradeSpoken: (pending: ExamTurn[]) => Promise<ExamReport>,
+): Promise<ExamReport> {
+  const grades: (QuestionGrade | null)[] = turns.map((turn) => {
+    const question = findQuestion(topic, turn.questionId)
+    if (question?.choices) {
+      return gradeChoice(question, turn.choiceIndex)
+    }
+    const sealed = turn.seal ? openSeal(turn.seal, topic.id, turn.questionId, turn.answer) : null
+    return sealed ? normalizeQuestionGrade(sealed) : null
+  })
+
+  const pending = turns.filter((_turn, index) => grades[index] === null)
+  let spoken: ExamReport | null = null
+  if (pending.length > 0) {
+    const forGrader = pending.map((turn) => ({ ...turn, seal: undefined, choiceIndex: undefined }))
     try {
-      report = await gradeWithOpenAI(config.apiKey, config.graderModel, topic, turns, metrics)
+      spoken = await gradeSpoken(forGrader)
     } catch {
-      report = gradeExamLocally(topic, turns, metrics)
+      spoken = gradeExamLocally(topic, forGrader, metrics)
     }
   }
 
-  sendJson(response, 200, withScoreToken(report, turns))
+  const perQuestion = turns.map((turn, index) => {
+    const known = grades[index]
+    if (known) {
+      return { ...known, questionId: turn.questionId }
+    }
+    const graded =
+      spoken?.perQuestion.find((grade) => grade.questionId === turn.questionId) ??
+      spoken?.perQuestion[pending.indexOf(turn)]
+    return graded ? { ...graded, questionId: turn.questionId } : gradeQuestion(topic, turn)
+  })
+  const totalScore = perQuestion.reduce((sum, grade) => sum + grade.score, 0)
+
+  return {
+    topicId: topic.id,
+    totalScore,
+    maxScore: turns.length * 2,
+    perQuestion,
+    summary: spoken?.summary ?? '',
+    reviewSuggestions: spoken?.reviewSuggestions ?? [],
+    measuredBehavior: metrics,
+    source: spoken?.source ?? 'local-heuristic',
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function gradeChoice(question: Question, choiceIndex: number | undefined): QuestionGrade {
+  const correct = question.choices?.[question.answer ?? -1] ?? ''
+  const isRight = choiceIndex === question.answer
+  return {
+    questionId: question.id,
+    score: isRight ? 2 : 0,
+    maxScore: 2,
+    correctIdeas: isRight ? [correct] : [],
+    missingIdeas: isRight ? [] : [correct],
+    misconception: isRight ? null : question.commonMisconception,
+    feedback: isRight ? 'Correct.' : `It was "${correct}".`,
+  }
 }
 
 async function gradeWithOpenAI(
@@ -529,7 +625,7 @@ async function gradeWithOpenAI(
             rubric: rubricForTurns(topic, turns),
             turns,
             requiredShape:
-              'Return JSON matching the supplied schema. Use source "openai", maxScore 6, and preserve measuredBehavior exactly.',
+              `Return JSON matching the supplied schema. Use source "openai", maxScore ${turns.length * 2}, and preserve measuredBehavior exactly.`,
             measuredBehavior: metrics,
           },
           null,
@@ -547,7 +643,7 @@ async function gradeWithOpenAI(
     },
   })
 
-  return normalizeReport(JSON.parse(result.output_text), topic, metrics, 'openai')
+  return normalizeReport(JSON.parse(result.output_text), topic, metrics, 'openai', turns.length)
 }
 
 function parseGradeRequest(
@@ -569,7 +665,7 @@ function parseGradeRequest(
     return null
   }
 
-  if (!Array.isArray(candidate.turns) || candidate.turns.length < 1 || candidate.turns.length > 3) {
+  if (!Array.isArray(candidate.turns) || candidate.turns.length < 1 || candidate.turns.length > 4) {
     return null
   }
 
@@ -600,6 +696,8 @@ function parseTurn(turn: unknown): ExamTurn | null {
     answer?: unknown
     followUpQuestion?: unknown
     followUpAnswer?: unknown
+    choiceIndex?: unknown
+    seal?: unknown
   }
 
   if (
@@ -619,6 +717,11 @@ function parseTurn(turn: unknown): ExamTurn | null {
       typeof candidate.followUpQuestion === 'string' ? candidate.followUpQuestion : undefined,
     followUpAnswer:
       typeof candidate.followUpAnswer === 'string' ? candidate.followUpAnswer : undefined,
+    choiceIndex:
+      typeof candidate.choiceIndex === 'number' && Number.isInteger(candidate.choiceIndex)
+        ? candidate.choiceIndex
+        : undefined,
+    seal: typeof candidate.seal === 'string' && candidate.seal.length <= 4000 ? candidate.seal : undefined,
   }
 }
 
@@ -645,16 +748,17 @@ function gradeExamLocally(topic: Topic, turns: ExamTurn[], metrics: ExamMetrics)
   const perQuestion = turns.map((turn) => gradeQuestion(topic, turn))
   const totalScore = perQuestion.reduce((sum, grade) => sum + grade.score, 0)
   const weakest = perQuestion.flatMap((grade) => grade.missingIdeas).slice(0, 3)
+  const maxScore = Math.max(2, turns.length * 2)
 
   return {
     topicId: topic.id,
     totalScore,
-    maxScore: topic.questions.length * 2,
+    maxScore,
     perQuestion,
     summary:
-      totalScore >= 5
+      totalScore >= maxScore - 1
         ? 'The candidate survived the viva with only minor corrections.'
-        : totalScore >= 3
+        : totalScore >= maxScore / 2
           ? 'The candidate has useful instincts, but the reasoning still leaks probability amplitude.'
           : 'The candidate should review the fundamentals before facing the examiner again.',
     reviewSuggestions:
@@ -715,6 +819,7 @@ function normalizeReport(
   topic: Topic,
   metrics: ExamMetrics,
   source: 'openai' | 'local-heuristic',
+  turnCount: number,
 ): ExamReport {
   const fallback = gradeExamLocally(topic, [], metrics)
 
@@ -726,7 +831,7 @@ function normalizeReport(
   const perQuestion = Array.isArray(report.perQuestion)
     ? report.perQuestion.map((grade) => normalizeQuestionGrade(grade)).filter(isQuestionGrade)
     : []
-  const maxScore = topic.questions.length * 2
+  const maxScore = turnCount * 2
   const totalScore =
     typeof report.totalScore === 'number'
       ? Math.min(maxScore, Math.max(0, report.totalScore))
@@ -1148,15 +1253,60 @@ function rubricForTurns(topic: Topic, turns: ExamTurn[]) {
   })
 }
 
-// ---------- leaderboard score token (mirrors api/leaderboard.ts) ----------
+// ---------- score tokens and grade seals (mirror api/leaderboard.ts) ----------
+
+const ROUND_LENGTH = 4
+const PROMOTION_STREAK = 2
+const SEAL_MAX_AGE_MS = 60 * 60 * 1000
 
 function withScoreToken(report: ExamReport, turns: ExamTurn[]) {
+  const seals: Record<string, string> = {}
+  turns.forEach((turn, index) => {
+    const grade = report.perQuestion[index]
+    if (!isCuriousId(turn.questionId) && grade) {
+      const seal = sealGrade(report.topicId, turn.questionId, turn.answer, grade)
+      if (seal) {
+        seals[turn.questionId] = seal
+      }
+    }
+  })
   const scoreToken = signScoreToken(
     report.topicId,
     turns.map((turn) => turn.questionId),
     report.perQuestion.map((grade) => grade.score),
   )
-  return scoreToken ? { ...report, scoreToken } : report
+  return scoreToken ? { ...report, seals, scoreToken } : { ...report, seals }
+}
+
+function isCuriousId(questionId: string): boolean {
+  return /-c\d+$/.test(questionId)
+}
+
+function replayRound(questionIds: string[], scores: number[]): 'curious' | 'physicist' | null {
+  if (questionIds.length !== ROUND_LENGTH || scores.length !== ROUND_LENGTH) {
+    return null
+  }
+  let tier: 'curious' | 'physicist' = 'physicist'
+  let streak = 0
+  for (const [index, questionId] of questionIds.entries()) {
+    if ((isCuriousId(questionId) ? 'curious' : 'physicist') !== tier) {
+      return null
+    }
+    const score = scores[index]
+    if (tier === 'physicist') {
+      if (score < 1) {
+        tier = 'curious'
+        streak = 0
+      }
+      continue
+    }
+    streak = score >= 2 ? streak + 1 : 0
+    if (streak >= PROMOTION_STREAK && index < ROUND_LENGTH - 1) {
+      tier = 'physicist'
+      streak = 0
+    }
+  }
+  return tier
 }
 
 export function signScoreToken(
@@ -1165,22 +1315,70 @@ export function signScoreToken(
   scores: number[],
 ): string | undefined {
   const secret = getScoreSecret()
-  if (!secret || scores.length === 0) {
+  const rounded = scores.map((score) => Math.max(0, Math.min(2, Math.round(score))))
+  const level = replayRound(questionIds, rounded)
+  if (!secret || !level) {
     return undefined
   }
 
   const payload = {
     topicId,
-    level:
-      questionIds.length > 0 && questionIds.every((id) => /-c\d+$/.test(id))
-        ? 'curious'
-        : 'physicist',
-    scores: scores.slice(0, 3).map((score) => Math.max(0, Math.min(2, Math.round(score)))),
+    level,
+    tiers: questionIds.map((id) => (isCuriousId(id) ? 'c' : 'p')).join(''),
+    scores: rounded,
     issuedAt: Date.now(),
     nonce: randomBytes(8).toString('hex'),
   }
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
-  return `${body}.${createHmac('sha256', secret).update(body).digest('base64url')}`
+  return `${body}.${hmacOf(body, secret)}`
+}
+
+export function sealGrade(
+  topicId: string,
+  questionId: string,
+  answer: string,
+  grade: unknown,
+): string | undefined {
+  const secret = getScoreSecret()
+  if (!secret) {
+    return undefined
+  }
+  const body = Buffer.from(
+    JSON.stringify({ topicId, questionId, answer: answerHash(answer), grade, issuedAt: Date.now() }),
+  ).toString('base64url')
+  return `${body}.${hmacOf(body, secret)}`
+}
+
+export function openSeal(seal: string, topicId: string, questionId: string, answer: string): unknown {
+  const secret = getScoreSecret()
+  const [body, signature] = seal.split('.')
+  if (!secret || !body || !signature) {
+    return null
+  }
+  const expected = Buffer.from(hmacOf(body, secret))
+  const received = Buffer.from(signature)
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    return null
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    return payload.topicId === topicId &&
+      payload.questionId === questionId &&
+      payload.answer === answerHash(answer) &&
+      Date.now() - payload.issuedAt <= SEAL_MAX_AGE_MS
+      ? payload.grade
+      : null
+  } catch {
+    return null
+  }
+}
+
+function answerHash(answer: string): string {
+  return createHash('sha256').update(answer.trim()).digest('base64url')
+}
+
+function hmacOf(body: string, secret: string): string {
+  return createHmac('sha256', secret).update(body).digest('base64url')
 }
 
 function getScoreSecret(): string {
