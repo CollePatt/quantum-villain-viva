@@ -24,6 +24,7 @@ import { ResultsScreen, type ScoredQuestion } from './components/ResultsScreen'
 import { useLeaderboard } from './hooks/useLeaderboard'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 import { detectInAppBrowser } from './lib/inAppBrowser'
+import { prepareVillainVoice, type VillainVoice } from './lib/villainVoice'
 import {
   accessHeaders,
   fetchJson,
@@ -181,6 +182,7 @@ export default function App() {
   const toolHintRef = useRef<() => string | null>(() => null)
   const responseActiveRef = useRef(false)
   const askPendingUntilRef = useRef(0)
+  const villainVoiceRef = useRef<VillainVoice | null>(null)
   const moodTimerRef = useRef(0)
   const bannerTimerRef = useRef(0)
 
@@ -299,6 +301,8 @@ export default function App() {
   function closeSession() {
     sessionRef.current?.close()
     sessionRef.current = null
+    villainVoiceRef.current?.close()
+    villainVoiceRef.current = null
     stopLocalSpeech()
     speech.stop()
     setIsSpeaking(false)
@@ -374,6 +378,9 @@ export default function App() {
     const useLiveVoice =
       Boolean(config?.hasApiKey) && (!config?.requiresAccessCode || accessCode.trim().length > 0)
     if (useLiveVoice) {
+      // Set up the voice effect inside the tap, while the browser still allows audio.
+      villainVoiceRef.current?.close()
+      villainVoiceRef.current = prepareVillainVoice()
       void startRealtime(topic)
     } else {
       startLocal(topic)
@@ -410,7 +417,7 @@ export default function App() {
       })
 
       // Loaded on demand so the first screen stays light on phones.
-      const { RealtimeAgent, RealtimeSession, tool } = await import('@openai/agents/realtime')
+      const { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, tool } = await import('@openai/agents/realtime')
       const agent = new RealtimeAgent({
         name: 'The Observer',
         instructions: buildVillainInstructions(topic),
@@ -431,8 +438,17 @@ export default function App() {
           }),
         ],
       })
+      const voice = villainVoiceRef.current
       const session = new RealtimeSession(agent, {
         model: token.realtimeModel,
+        ...(voice
+          ? {
+              transport: new OpenAIRealtimeWebRTC({
+                audioElement: voice.audioElement,
+                changePeerConnection: voice.changePeerConnection,
+              }),
+            }
+          : {}),
         tracingDisabled: true,
         config: {
           outputModalities: ['audio'],
