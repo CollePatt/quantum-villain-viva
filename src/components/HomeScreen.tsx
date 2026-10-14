@@ -54,19 +54,13 @@ export function HomeScreen({
       <div className="home-controls">
         <ol className="rules" aria-label="How it works">
           <li>
-            <span>
-              <b>Measured.</b> The first question is hard. Physicist level, real exam stuff.
-            </span>
+            <span>The first question is hard.</span>
           </li>
           <li>
-            <span>
-              <b>Collapsed.</b> Miss it and you drop to Curious: quick multiple choice.
-            </span>
+            <span>Get it wrong and the next ones are multiple choice.</span>
           </li>
           <li>
-            <span>
-              <b>Climb back.</b> Two right in a row and you're back up for another hard one.
-            </span>
+            <span>Get two right in a row for another hard one.</span>
           </li>
         </ol>
 

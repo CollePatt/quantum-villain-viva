@@ -6,9 +6,9 @@ A two-minute voice game built for phones. The Observer, a quantum supervillain s
 
 ## How it plays
 
-- **Measured.** The first question is a hard, physics-exam-level question.
-- **Collapsed.** Miss it and you drop to the Curious tier: quick multiple choice anyone can try.
-- **Climb back.** Two right in a row and you're promoted back for another hard one.
+- The first question is hard.
+- Get it wrong and the next ones are multiple choice.
+- Get two right in a row for another hard one.
 - Points reward accuracy and speed; hints cost points. Scores post to a shared scoreboard.
 
 ## How it works
