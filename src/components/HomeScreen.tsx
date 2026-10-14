@@ -46,21 +46,21 @@ export function HomeScreen({
           Every answer <mark>collapses</mark> your score.
         </h1>
         <p className="lede">
-          The Observer asks 4 questions out loud. Answer before the clock runs out. Points for being right, and
-          for being fast.
+          The Observer quizzes you out loud on quantum physics. Answer by voice before the clock runs out. Right
+          and fast answers score the most.
         </p>
       </div>
 
       <div className="home-controls">
-        <ol className="rules" aria-label="How it works">
+        <ol className="rules" aria-label="How to play">
           <li>
-            <span>The first question is hard.</span>
+            <span>You get 4 questions. They start hard, with 60 seconds each.</span>
           </li>
           <li>
-            <span>Get it wrong and the next ones are multiple choice.</span>
+            <span>Get a hard one wrong and you drop to multiple choice, with 20 seconds each.</span>
           </li>
           <li>
-            <span>Get two right in a row for another hard one.</span>
+            <span>Get 2 multiple-choice questions right in a row to move back up to hard.</span>
           </li>
         </ol>
 

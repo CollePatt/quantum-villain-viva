@@ -6,9 +6,9 @@ A two-minute voice game built for phones. The Observer, a quantum supervillain s
 
 ## How it plays
 
-- The first question is hard.
-- Get it wrong and the next ones are multiple choice.
-- Get two right in a row for another hard one.
+- You get 4 questions. They start hard, with 60 seconds each.
+- Get a hard one wrong and you drop to multiple choice, with 20 seconds each.
+- Get 2 multiple-choice questions right in a row to move back up to hard.
 - Points reward accuracy and speed; hints cost points. Scores post to a shared scoreboard.
 
 ## How it works
