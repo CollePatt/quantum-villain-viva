@@ -253,17 +253,18 @@ export default function App() {
     return () => window.clearInterval(interval)
   }, [isAnswering, timeLimit])
 
-  // A spoken "B" or "the second one" locks in a multiple-choice answer.
+  // A spoken "B" or "the second one" locks in a multiple-choice answer. With live voice the
+  // Observer locks it in itself, so only one path ever moves the game on.
   useEffect(() => {
     const choices = question.choices
-    if (!choices || phase !== 'answering' || !answer) {
+    if (!choices || phase !== 'answering' || !answer || voiceMode === 'realtime') {
       return
     }
     const picked = matchChoice(answer, choices)
     if (picked !== null) {
       lockInRef.current(picked)
     }
-  }, [answer, question, phase])
+  }, [answer, question, phase, voiceMode])
 
   function setPhaseNow(next: Phase) {
     phaseRef.current = next
@@ -417,7 +418,9 @@ export default function App() {
       })
 
       // Loaded on demand so the first screen stays light on phones.
-      const { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, tool } = await import('@openai/agents/realtime')
+      const { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, backgroundResult, tool } = await import(
+        '@openai/agents/realtime'
+      )
       const agent = new RealtimeAgent({
         name: 'The Observer',
         instructions: buildVillainInstructions(topic),
@@ -427,14 +430,16 @@ export default function App() {
             name: 'lock_in_answer',
             description: 'Lock in the player’s answer once they have clearly given it. Returns the verdict and what to say next.',
             parameters: z.object({}),
+            // When the game already moved on (button, timer or a tapped choice), answer the call
+            // without starting a reply, so the Observer doesn't talk over the next question.
             execute: async () =>
-              (await toolLockInRef.current()) ?? 'Nothing to lock in right now. Say nothing and keep listening.',
+              (await toolLockInRef.current()) ?? backgroundResult('Already locked in. Say nothing.'),
           }),
           tool({
             name: 'use_hint',
             description: 'Give the player a hint when they ask for one. It costs them points.',
             parameters: z.object({}),
-            execute: async () => toolHintRef.current() ?? 'No hint available. Tell them they already used it.',
+            execute: async () => toolHintRef.current() ?? backgroundResult('Hint already used.'),
           }),
         ],
       })
@@ -618,7 +623,7 @@ export default function App() {
     const askedTier = tierOfQuestion(asked)
 
     // Give live transcription a moment to deliver the player's last words.
-    if (voiceMode === 'realtime' && !asked.choices && choice === undefined) {
+    if (voiceMode === 'realtime' && choice === undefined) {
       const deadline = Date.now() + 3000
       while (transcriptPendingRef.current && Date.now() < deadline) {
         await wait(100)
