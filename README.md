@@ -1,27 +1,22 @@
 # Quantum Villain
 
-A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, asks three questions out loud. Answer by voice before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
+A two-minute voice game built for phones. The Observer, a quantum supervillain shaped like a giant eye, asks four questions out loud. Answer by voice (or type) before the clock runs out, score points for being right and fast, and post your score to the scoreboard.
 
-- **Curious** mode asks plain-English questions anyone can try. **Physicist** mode keeps the original oral-exam questions.
-- Points: up to 250 for accuracy and 83 for speed per question (999 max). A hint costs 50.
-- With an OpenAI key, the Observer speaks through OpenAI Realtime (speech-to-speech over WebRTC). Without one, the game still works using the browser's own speech recognition and voice.
+**Play it:** https://quantum-villain-viva.vercel.app
 
-## Live Demo
+## How it plays
 
-[Launch the static preview](https://collepatt.github.io/quantum-villain-viva/)
+- You get 4 questions. They start hard, with 60 seconds each.
+- Get a hard one wrong and you drop to multiple choice, with 20 seconds each.
+- Get 2 multiple-choice questions right in a row to move back up to hard.
+- Points reward accuracy and speed; hints cost points. Scores post to a shared scoreboard.
 
-The hosted preview runs without secrets: questions are read with browser speech and grading uses a local heuristic. Live microphone mode is available when running locally with an OpenAI API key.
+## How it works
 
-## Features
-
-- Cinematic transmission intro and animated exam chamber UI.
-- Five quantum mechanics topics: tunneling, measurement, spin, harmonic oscillator, and entanglement.
-- Deterministic three-question exam flow with one follow-up maximum per answer.
-- Realtime villain reactions that respond to the user's answer before follow-ups or transitions.
-- Stolen field manual overlay with topic-specific survival notes for non-physics testers.
-- Survival, Viva, and Doom protocols for adjustable hint access and follow-up strictness.
-- Rubric scorecard with per-question feedback and review suggestions.
-- Demo metrics for duration, first response latency, interruptions, and transcript count.
+- With an OpenAI key on the server, the Observer speaks through OpenAI Realtime (speech-to-speech over WebRTC). The browser only ever gets a short-lived token.
+- Without a key, or if live voice fails, the game falls back to the browser's own speech recognition and voice, and you can always type.
+- Inside social-app browsers (LinkedIn, Instagram, Facebook), which often block the mic, the home screen offers a way out to Safari or Chrome and the game drops to typing if the mic is refused.
+- Answers are graded server-side with a structured model call, with a local heuristic as backup. Scores are signed so only graded games reach the scoreboard (Supabase).
 
 ## Local Setup
 
@@ -63,7 +58,7 @@ VIVA_ACCESS_CODE=share-this-with-testers
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
 OPENAI_REALTIME_VOICE=ash
 OPENAI_GRADER_MODEL=gpt-4.1-mini
-RATE_LIMIT_ENABLED=true
+RATE_LIMIT_ENABLED=true   # default on Vercel; set false to disable
 RATE_LIMIT_MAX=20
 RATE_LIMIT_WINDOW_MINUTES=60
 ```

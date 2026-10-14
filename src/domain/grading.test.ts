@@ -30,7 +30,7 @@ describe('local grading', () => {
     )
 
     expect(report.source).toBe('local-heuristic')
-    expect(report.maxScore).toBe(6)
+    expect(report.maxScore).toBe(2)
     expect(report.totalScore).toBeGreaterThanOrEqual(1)
     expect(report.measuredBehavior.interruptions).toBe(1)
   })

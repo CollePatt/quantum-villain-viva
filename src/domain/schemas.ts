@@ -15,6 +15,9 @@ export const QuestionSchema = z.object({
   commonMisconception: z.string(),
   followUp: z.string().optional(),
   hint: z.string().optional(),
+  // Multiple-choice questions (the Curious tier) have fixed choices and a correct index.
+  choices: z.array(z.string()).length(3).optional(),
+  answer: z.number().int().min(0).max(2).optional(),
 })
 
 export const LevelSchema = z.enum(['curious', 'physicist'])
@@ -26,7 +29,7 @@ export const TopicSchema = z.object({
   emoji: z.string(),
   tagline: z.string(),
   premise: z.string(),
-  questions: z.array(QuestionSchema).length(3),
+  questions: z.array(QuestionSchema).length(4),
   curiousQuestions: z.array(QuestionSchema).length(3),
 })
 
@@ -38,6 +41,9 @@ export const ExamTurnSchema = z.object({
   followUpAnswer: z.string().optional(),
   secondsUsed: z.number().nonnegative().optional(),
   usedHint: z.boolean().optional(),
+  choiceIndex: z.number().int().min(0).max(2).optional(),
+  // A signed grade from an earlier per-answer call, so the final call can reuse it.
+  seal: z.string().max(4000).optional(),
 })
 
 export const ExamMetricsSchema = z.object({
@@ -78,7 +84,7 @@ export const TokenRequestSchema = z.object({
 
 export const GradeRequestSchema = z.object({
   topicId: TopicIdSchema,
-  turns: z.array(ExamTurnSchema).min(1).max(3),
+  turns: z.array(ExamTurnSchema).min(1).max(4),
   metrics: ExamMetricsSchema,
 })
 

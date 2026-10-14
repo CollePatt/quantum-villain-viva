@@ -2,6 +2,7 @@ import type {
   ExamMetrics,
   ExamReport,
   ExamTurn,
+  Question,
   QuestionGrade,
   Topic,
 } from './schemas'
@@ -25,6 +26,59 @@ export function conceptMatched(answer: string, concept: string): boolean {
   return hits.length >= Math.min(2, conceptWords.length)
 }
 
+const LETTERS = ['a', 'b', 'c']
+const ORDINALS = ['first', 'second', 'third']
+const NUMBER_WORDS = ['one', 'two', 'three']
+
+// Reads a multiple-choice pick out of speech: "B", "option b", "the second one", or the
+// choice's own words. Returns null unless exactly one choice fits.
+export function matchChoice(text: string, choices: readonly string[]): number | null {
+  const spoken = normalize(text).trim()
+  if (!spoken) {
+    return null
+  }
+  const words = spoken.split(' ')
+  const lettered = LETTERS.findIndex(
+    (letter) => words.length <= 3 && words[words.length - 1] === letter,
+  )
+  if (lettered >= 0 && lettered < choices.length) {
+    return lettered
+  }
+  const ordinal = ORDINALS.findIndex((word) => words.length <= 4 && words.includes(word))
+  if (ordinal >= 0 && ordinal < choices.length) {
+    return ordinal
+  }
+  const numbered = NUMBER_WORDS.findIndex((word) => words.length <= 3 && words.includes(word))
+  if (numbered >= 0 && numbered < choices.length) {
+    return numbered
+  }
+
+  const matches = choices
+    .map((choice, index) => {
+      const choiceWords = normalize(choice)
+        .split(' ')
+        .filter((word) => word.length > 3)
+      const hits = choiceWords.filter((word) => words.includes(word)).length
+      return { index, ratio: choiceWords.length ? hits / choiceWords.length : 0 }
+    })
+    .filter((match) => match.ratio >= 0.5)
+  return matches.length === 1 ? matches[0].index : null
+}
+
+export function gradeChoice(question: Question, choiceIndex: number | undefined): QuestionGrade {
+  const correct = question.choices?.[question.answer ?? -1] ?? ''
+  const isRight = choiceIndex === question.answer
+  return {
+    questionId: question.id,
+    score: isRight ? 2 : 0,
+    maxScore: 2,
+    correctIdeas: isRight ? [correct] : [],
+    missingIdeas: isRight ? [] : [correct],
+    misconception: isRight ? null : question.commonMisconception,
+    feedback: isRight ? 'Correct.' : `It was "${correct}".`,
+  }
+}
+
 export function gradeExamLocally(
   topic: Topic,
   turns: ExamTurn[],
@@ -32,6 +86,9 @@ export function gradeExamLocally(
 ): ExamReport {
   const perQuestion: QuestionGrade[] = turns.map((turn) => {
     const question = findQuestion(topic, turn.questionId)
+    if (question?.choices) {
+      return gradeChoice(question, turn.choiceIndex)
+    }
     const combinedAnswer = `${turn.answer} ${turn.followUpAnswer ?? ''}`.trim()
 
     if (!question) {
@@ -75,7 +132,7 @@ export function gradeExamLocally(
   })
 
   const totalScore = perQuestion.reduce((sum, grade) => sum + grade.score, 0)
-  const maxScore = topic.questions.length * 2
+  const maxScore = turns.length * 2
   const weakest = perQuestion
     .flatMap((grade) => grade.missingIdeas)
     .slice(0, 3)
@@ -86,9 +143,9 @@ export function gradeExamLocally(
     maxScore,
     perQuestion,
     summary:
-      totalScore >= 5
+      totalScore >= maxScore - 1
         ? 'The candidate survived the viva with only minor corrections.'
-        : totalScore >= 3
+        : totalScore >= maxScore / 2
           ? 'The candidate has useful instincts, but the reasoning still leaks probability amplitude.'
           : 'The candidate should review the fundamentals before facing the examiner again.',
     reviewSuggestions:

@@ -1,7 +1,9 @@
+import type { TierEvent } from '../domain/round'
+
 const OPENERS = [
-  'I see you. Three questions. Try not to blink.',
-  'Hold still. I am observing.',
-  'Another wavefunction wanders in. Let us collapse it.',
+  'Before we begin, I need to measure you. Hard question first.',
+  'One measurement first. It tells me which version of you showed up.',
+  'Hold still. This first question decides what you are.',
 ]
 
 const IMPRESSED = [
@@ -16,6 +18,28 @@ const UNIMPRESSED = [
   'Fascinating. Physics disagrees.',
 ]
 
+const TIER_LINES: Record<Exclude<TierEvent, null>, string[]> = {
+  survived: [
+    'Measurement holds. You remain a physicist. For now.',
+    'Physicist confirmed. Do not let it go to your head.',
+    'Still standing. I will look harder.',
+  ],
+  collapsed: [
+    'Measurement complete. Collapsing you to a simpler state.',
+    'You were in a superposition of physicist and not. I have looked. Not.',
+    'Downgrading you to Curious. Multiple choice. Take your time. Actually, do not.',
+  ],
+  promoted: [
+    'Two in a row. Suspicious. Back up you go.',
+    'Your wavefunction is creeping upward. I will allow one more hard one.',
+    'Fine. Physicist again. Prove it was not luck.',
+  ],
+  'too-late': [
+    'That would have earned a promotion. Pity there is nothing left to ask.',
+    'Two in a row. Promotion denied on a technicality: time.',
+  ],
+}
+
 const HINT_TAUNTS = [
   'A hint? I saw that.',
   'Fine. Take it. I am keeping the points.',
@@ -29,6 +53,8 @@ function pick(lines: string[]): string {
 export const villainLines = {
   opener: () => pick(OPENERS),
   reaction: (strong: boolean) => pick(strong ? IMPRESSED : UNIMPRESSED),
+  tier: (event: Exclude<TierEvent, null>) => pick(TIER_LINES[event]),
   hint: () => pick(HINT_TAUNTS),
+  measuring: 'Measuring.',
   final: 'That is all. Let us see what collapsed.',
 }

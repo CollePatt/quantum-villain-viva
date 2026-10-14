@@ -2,9 +2,15 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 // Kept standalone (no imports from src/) like the other Vercel routes.
-// Scoring numbers mirror src/domain/scoring.ts.
-const ACCURACY_POINTS = [0, 125, 250]
-const SPEED_BONUS_MAX = 83
+// Scoring numbers mirror src/domain/scoring.ts, and the tier rules mirror src/domain/round.ts.
+const TIER_MAX_POINTS = {
+  physicist: { accuracy: [0, 125, 200], speedMax: 50 },
+  curious: { accuracy: [0, 40, 80], speedMax: 20 },
+}
+const MAX_POINTS = 999
+const ROUND_LENGTH = 4
+const PROMOTION_STREAK = 2
+const SEAL_MAX_AGE_MS = 60 * 60 * 1000
 const LEVELS = ['curious', 'physicist'] as const
 const TOPIC_IDS = ['tunneling', 'measurement', 'spin', 'harmonic-oscillator', 'entanglement']
 const TOKEN_MAX_AGE_MS = 30 * 60 * 1000
@@ -40,6 +46,8 @@ export type LeaderboardStore = {
 export type ScoreTokenPayload = {
   topicId: string
   level: Level
+  // One letter per question, p (physicist) or c (curious), in the order they were asked.
+  tiers: string
   scores: number[]
   issuedAt: number
   nonce: string
@@ -62,10 +70,37 @@ export function getScoreSecret(): string {
 }
 
 // Curious-level question ids end in -c1, -c2, -c3.
-export function levelForQuestionIds(questionIds: string[]): Level {
-  return questionIds.length > 0 && questionIds.every((id) => /-c\d+$/.test(id))
-    ? 'curious'
-    : 'physicist'
+export function isCuriousId(questionId: string): boolean {
+  return /-c\d+$/.test(questionId)
+}
+
+// Replays the tier rules for a finished round. Returns the final tier, or null when the
+// question sequence could not have come from the rules.
+export function replayRound(questionIds: string[], scores: number[]): Level | null {
+  if (questionIds.length !== ROUND_LENGTH || scores.length !== ROUND_LENGTH) {
+    return null
+  }
+  let tier: Level = 'physicist'
+  let streak = 0
+  for (const [index, questionId] of questionIds.entries()) {
+    if ((isCuriousId(questionId) ? 'curious' : 'physicist') !== tier) {
+      return null
+    }
+    const score = scores[index]
+    if (tier === 'physicist') {
+      if (score < 1) {
+        tier = 'curious'
+        streak = 0
+      }
+      continue
+    }
+    streak = score >= 2 ? streak + 1 : 0
+    if (streak >= PROMOTION_STREAK && index < ROUND_LENGTH - 1) {
+      tier = 'physicist'
+      streak = 0
+    }
+  }
+  return tier
 }
 
 export function signScoreToken(
@@ -74,14 +109,17 @@ export function signScoreToken(
   scores: number[],
   secret = getScoreSecret(),
 ): string | undefined {
-  if (!secret) {
+  const rounded = scores.map((score) => Math.max(0, Math.min(2, Math.round(score))))
+  const level = replayRound(questionIds, rounded)
+  if (!secret || !level) {
     return undefined
   }
 
   const payload: ScoreTokenPayload = {
     topicId,
-    level: levelForQuestionIds(questionIds),
-    scores: scores.map((score) => Math.max(0, Math.min(2, Math.round(score)))),
+    level,
+    tiers: questionIds.map((id) => (isCuriousId(id) ? 'c' : 'p')).join(''),
+    scores: rounded,
     issuedAt: Date.now(),
     nonce: randomBytes(8).toString('hex'),
   }
@@ -115,8 +153,9 @@ export function verifyScoreToken(
       !TOPIC_IDS.includes(payload.topicId) ||
       !LEVELS.includes(payload.level) ||
       !Array.isArray(payload.scores) ||
-      payload.scores.length < 1 ||
-      payload.scores.length > 3 ||
+      payload.scores.length !== ROUND_LENGTH ||
+      typeof payload.tiers !== 'string' ||
+      !/^[pc]{4}$/.test(payload.tiers) ||
       typeof payload.issuedAt !== 'number' ||
       now - payload.issuedAt > TOKEN_MAX_AGE_MS
     ) {
@@ -128,11 +167,67 @@ export function verifyScoreToken(
   }
 }
 
-export function maxPointsForScores(scores: number[]): number {
-  return scores.reduce((sum, score) => {
-    const accuracy = ACCURACY_POINTS[Math.max(0, Math.min(2, Math.round(score)))]
-    return sum + (accuracy > 0 ? accuracy + SPEED_BONUS_MAX : 0)
+export function maxPointsForScores(scores: number[], tiers: string): number {
+  const total = scores.reduce((sum, score, index) => {
+    const rules = tiers[index] === 'c' ? TIER_MAX_POINTS.curious : TIER_MAX_POINTS.physicist
+    const accuracy = rules.accuracy[Math.max(0, Math.min(2, Math.round(score)))]
+    return sum + (accuracy > 0 ? accuracy + rules.speedMax : 0)
   }, 0)
+  return Math.min(MAX_POINTS, total)
+}
+
+// ---------- grade seals ----------
+// A hard answer is graded the moment it is locked in, because the grade decides the
+// player's tier. The seal lets the final grading call reuse that exact grade.
+
+export function sealGrade(
+  topicId: string,
+  questionId: string,
+  answer: string,
+  grade: unknown,
+  secret = getScoreSecret(),
+): string | undefined {
+  if (!secret) {
+    return undefined
+  }
+  const body = Buffer.from(
+    JSON.stringify({ topicId, questionId, answer: answerHash(answer), grade, issuedAt: Date.now() }),
+  ).toString('base64url')
+  return `${body}.${hmac(body, secret)}`
+}
+
+export function openSeal(
+  seal: string,
+  topicId: string,
+  questionId: string,
+  answer: string,
+  secret = getScoreSecret(),
+  now = Date.now(),
+): unknown | null {
+  const [body, signature] = typeof seal === 'string' ? seal.split('.') : []
+  if (!secret || !body || !signature) {
+    return null
+  }
+  const expected = Buffer.from(hmac(body, secret))
+  const received = Buffer.from(signature)
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    return null
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    return payload.topicId === topicId &&
+      payload.questionId === questionId &&
+      payload.answer === answerHash(answer) &&
+      now - payload.issuedAt <= SEAL_MAX_AGE_MS
+      ? payload.grade
+      : null
+  } catch {
+    return null
+  }
+}
+
+function answerHash(answer: string): string {
+  return createHash('sha256').update(answer.trim()).digest('base64url')
 }
 
 function hmac(body: string, secret: string): string {
@@ -355,7 +450,7 @@ export default async function handler(
   if (
     !Number.isInteger(points) ||
     points < 0 ||
-    points > maxPointsForScores(payload.scores)
+    points > maxPointsForScores(payload.scores, payload.tiers)
   ) {
     sendJson(response, 400, error('invalid_points', 'That score does not add up.'))
     return

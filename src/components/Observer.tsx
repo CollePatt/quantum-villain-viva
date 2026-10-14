@@ -9,6 +9,8 @@ export type ObserverMood =
   | 'smug'
   | 'angry'
   | 'defeated'
+  | 'rolling'
+  | 'suspicious'
 
 type ObserverProps = {
   mood?: ObserverMood
@@ -29,6 +31,9 @@ const MOOD_SHAPE: Record<ObserverMood, { upper: number; lower: number; pupil: nu
   smug: { upper: 40, lower: 26, pupil: 0.85, gaze: { x: 22, y: 4 } },
   angry: { upper: 46, lower: 32, pupil: 0.6, gaze: { x: 0, y: 4 } },
   defeated: { upper: 40, lower: 4, pupil: 1.1, gaze: { x: -26, y: 14 } },
+  // An eye-roll: the iris sweeps up and over (see .mood-rolling in App.css), then settles.
+  rolling: { upper: 24, lower: 0, pupil: 0.9, gaze: { x: 18, y: -16 } },
+  suspicious: { upper: 36, lower: 32, pupil: 0.55, gaze: { x: 0, y: 2 } },
 }
 
 const WANDERING: ObserverMood[] = ['idle', 'thinking']

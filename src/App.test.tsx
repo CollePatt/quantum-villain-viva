@@ -45,7 +45,7 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('plays a full typed round and shows a points scorecard', async () => {
+  it('collapses a player who misses the measurement, then lets them climb back', async () => {
     const user = userEvent.setup()
     render(<App />)
 
@@ -56,26 +56,35 @@ describe('App', () => {
     await user.click(screen.getByRole('radio', { name: /Tunneling/i }))
     await user.click(screen.getByRole('button', { name: /Be observed/i }))
 
-    expect(screen.getByLabelText(/Question 1 of 3/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /get through a wall/i })).toBeInTheDocument()
+    // Question 1 is the hard measurement.
+    expect(screen.getByLabelText(/Question 1 of 4/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Tier: Physicist/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /finite potential barrier/i })).toBeInTheDocument()
 
-    const answers = [
-      'The particle is a spread out wave, so the wave leaks into and through the barrier.',
-      'A thicker barrier makes tunneling less likely and the chance drops exponentially.',
-      'Nuclear fusion in stars needs particles crossing an energy barrier.',
-    ]
+    // jsdom has no speech recognition, so the typed answer box shows straight away.
+    await user.type(await screen.findByRole('textbox', { name: /Your answer/i }), 'No idea, honestly.')
+    await user.click(screen.getByRole('button', { name: /Lock it in/i }))
 
-    for (const [index, answer] of answers.entries()) {
-      // jsdom has no speech recognition, so the typed answer box shows straight away.
-      const box = await screen.findByRole('textbox', { name: /Your answer/i })
-      await user.clear(box)
-      await user.type(box, answer)
-      await user.click(screen.getByRole('button', { name: index === 2 ? /Final answer/i : /Lock it in/i }))
-    }
+    // Missed: collapsed to Curious multiple choice.
+    expect(await screen.findByRole('status')).toHaveTextContent(/Collapsed/i)
+    expect(screen.getByLabelText(/Tier: Curious, 0 of 2/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Its wave leaks through the wall/i }))
+    expect(await screen.findByLabelText(/Tier: Curious, 1 of 2/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /It drops off a cliff/i }))
+
+    // Two right in a row: promoted for one more hard question.
+    expect(await screen.findByLabelText(/Tier: Physicist/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /wider or taller/i })).toBeInTheDocument()
+    await user.type(
+      await screen.findByRole('textbox', { name: /Your answer/i }),
+      'The probability decreases exponentially with barrier width, and decreases as the barrier height exceeds the particle energy.',
+    )
+    await user.click(screen.getByRole('button', { name: /Final answer/i }))
 
     const results = await screen.findByRole('region', { name: /Results/i }, { timeout: 6000 })
+    expect(within(results).getByText(/Climbed back to Physicist/i)).toBeInTheDocument()
     expect(within(results).getByLabelText(/points/i)).toBeInTheDocument()
-    expect(within(results).getAllByText(/^Q[123]$/)).toHaveLength(3)
+    expect(within(results).getAllByText(/^Q[1234]$/)).toHaveLength(4)
     expect(within(results).getByRole('button', { name: /Share score/i })).toBeInTheDocument()
   }, 15000)
 

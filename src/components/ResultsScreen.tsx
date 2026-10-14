@@ -1,6 +1,7 @@
 import { RotateCcw, Share2, Trophy } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
-import { MAX_POINTS, rankFor, type QuestionPoints } from '../domain/scoring'
+import type { RoundPath } from '../domain/round'
+import { MAX_POINTS, type QuestionPoints } from '../domain/scoring'
 import type { ExamReport, Level, Topic } from '../domain/schemas'
 import type { LeaderboardEntry } from '../hooks/useLeaderboard'
 import { Leaderboard } from './Leaderboard'
@@ -8,6 +9,7 @@ import { Observer, type ObserverMood } from './Observer'
 
 export type ScoredQuestion = {
   prompt: string
+  tier: Level
   rubricScore: number
   feedback: string
   missing: string[]
@@ -22,7 +24,8 @@ type SubmitState =
 
 type ResultsScreenProps = {
   topic: Topic
-  level: Level
+  tier: Level
+  path: RoundPath
   report: ExamReport
   totalPoints: number
   questions: ScoredQuestion[]
@@ -38,6 +41,25 @@ type ResultsScreenProps = {
 }
 
 const NAME_STORAGE_KEY = 'quantum-villain-name'
+
+const HEADLINES: Record<RoundPath, { title: string; line: string; mood: ObserverMood }> = {
+  held: { title: 'Survived at Physicist level', line: 'The Observer looked away first.', mood: 'defeated' },
+  climbed: {
+    title: 'Climbed back to Physicist',
+    line: 'Collapsed, recovered, and annoyed me twice.',
+    mood: 'impressed',
+  },
+  'fell-late': {
+    title: 'Collapsed on the last question',
+    line: 'So close to remaining interesting.',
+    mood: 'smug',
+  },
+  collapsed: {
+    title: 'Collapsed to Curious',
+    line: 'A perfectly respectable state. For a particle.',
+    mood: 'smug',
+  },
+}
 
 function readName(): string {
   try {
@@ -71,7 +93,8 @@ function useCountUp(target: number, durationMs = 1200): number {
 
 export function ResultsScreen({
   topic,
-  level,
+  tier,
+  path,
   report,
   totalPoints,
   questions,
@@ -86,12 +109,12 @@ export function ResultsScreen({
   onHome,
 }: ResultsScreenProps) {
   const shown = useCountUp(totalPoints)
-  const rank = rankFor(totalPoints)
+  const headline = HEADLINES[path]
+  const tierName = tier === 'curious' ? 'Curious' : 'Physicist'
   const [name, setName] = useState(readName)
   const [submit, setSubmit] = useState<SubmitState>({ status: 'idle' })
   const [shareNote, setShareNote] = useState<string | null>(null)
-  const mood: ObserverMood =
-    totalPoints >= 700 ? 'defeated' : totalPoints >= 450 ? 'impressed' : totalPoints >= 200 ? 'smug' : 'angry'
+  const mood: ObserverMood = path === 'collapsed' && totalPoints < 150 ? 'angry' : headline.mood
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -114,7 +137,10 @@ export function ResultsScreen({
 
   async function handleShare() {
     const url = `${window.location.origin}${window.location.pathname}`
-    const text = `I scored ${totalPoints} against The Observer in Quantum Villain (${rank.title}, ${topic.shortName}). Think you can survive being observed?`
+    const text =
+      tier === 'physicist'
+        ? `I survived The Observer at Physicist level: ${totalPoints} pts on ${topic.shortName}. Can you hold your state?`
+        : `The Observer collapsed me to Curious: ${totalPoints} pts on ${topic.shortName}. Bet you collapse faster.`
     try {
       if (navigator.share) {
         await navigator.share({ title: 'Quantum Villain', text, url })
@@ -133,19 +159,19 @@ export function ResultsScreen({
         <button type="button" className="wordmark as-button" onClick={onHome}>
           Quantum Villain
         </button>
-        <span className="level-tag">
-          {topic.shortName} · {level === 'curious' ? 'Curious' : 'Physicist'}
-        </span>
+        <span className={`tier-chip ${tier}`}>{tierName}</span>
       </header>
 
       <div className="score-hero">
         <Observer mood={mood} width={200} />
-        <p className="rank-title">{rank.title}</p>
+        <p className="rank-title">{headline.title}</p>
         <p className="big-score" aria-label={`${totalPoints} points`}>
           {shown}
           <small> / {MAX_POINTS}</small>
         </p>
-        <p className="rank-line">{rank.line}</p>
+        <p className="rank-line">
+          {headline.line} <span className="topic-note">{topic.shortName}</span>
+        </p>
       </div>
 
       <div className="score-actions">
@@ -170,6 +196,9 @@ export function ResultsScreen({
                   {question.rubricScore >= 2 ? '✓' : question.rubricScore >= 1 ? '~' : '✗'}
                 </span>
                 <span className="q-label">Q{index + 1}</span>
+                <span className={`q-tier ${question.tier}`} title={question.tier === 'curious' ? 'Curious' : 'Physicist'}>
+                  {question.tier === 'curious' ? 'C' : 'P'}
+                </span>
                 <span className="q-feedback">{question.feedback}</span>
                 <span className="q-points">+{question.points.total}</span>
               </summary>
@@ -192,7 +221,7 @@ export function ResultsScreen({
 
       <section className="board-card" aria-label="Scoreboard">
         <h3>
-          <Trophy size={18} /> {level === 'curious' ? 'Curious' : 'Physicist'} scoreboard
+          <Trophy size={18} /> {tierName} scoreboard
         </h3>
         {boardEnabled && canPost ? (
           submit.status === 'posted' ? (
@@ -231,8 +260,10 @@ export function ResultsScreen({
         <summary>Under the hood</summary>
         <p>{voiceSummary}</p>
         <p>
-          Graded by {report.source === 'openai' ? 'an AI grader against a fixed rubric' : 'a quick on-device keyword check'}.
-          Points: up to 250 for accuracy and 83 for speed per question.
+          Spoken answers graded by{' '}
+          {report.source === 'openai' ? 'an AI grader against a fixed rubric' : 'a quick keyword check'}, the moment you
+          lock them in. Physicist questions are worth up to 250 points, Curious ones up to 100. Each tier has its own
+          scoreboard, and you land on the one for the tier you finish in.
         </p>
       </details>
     </section>
