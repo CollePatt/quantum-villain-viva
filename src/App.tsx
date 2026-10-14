@@ -80,6 +80,7 @@ type RealtimeTransportEvent = {
 const BESTS_STORAGE_KEY = 'quantum-villain-bests'
 // The timer waits this long after a question appears, so a slow voice start does not cost points.
 const QUESTION_GRACE_MS = 1500
+const ASK_WAIT_CAP_MS = 15000
 
 function createEmptyMetrics(): ExamMetrics {
   return {
@@ -179,6 +180,7 @@ export default function App() {
   const toolLockInRef = useRef<() => Promise<string | null>>(async () => null)
   const toolHintRef = useRef<() => string | null>(() => null)
   const responseActiveRef = useRef(false)
+  const askPendingUntilRef = useRef(0)
   const moodTimerRef = useRef(0)
   const bannerTimerRef = useRef(0)
 
@@ -236,7 +238,8 @@ export default function App() {
       return
     }
     const interval = window.setInterval(() => {
-      if (isSpeakingRef.current || lockingRef.current || Date.now() < graceUntilRef.current) {
+      const now = Date.now()
+      if (isSpeakingRef.current || lockingRef.current || now < graceUntilRef.current || now < askPendingUntilRef.current) {
         return
       }
       elapsedRef.current = Math.min(timeLimit, elapsedRef.current + 0.1)
@@ -271,6 +274,8 @@ export default function App() {
     elapsedRef.current = 0
     setElapsed(0)
     graceUntilRef.current = Date.now() + QUESTION_GRACE_MS
+    // With live voice, hold the clock until the question has been spoken (with a safety cap).
+    askPendingUntilRef.current = sessionRef.current ? Date.now() + ASK_WAIT_CAP_MS : 0
     setUsedHint(false)
     setStruckChoice(null)
     setAnswer('')
@@ -461,22 +466,10 @@ export default function App() {
         setMetrics((current) => ({ ...current, transcriptItems: entries.length }))
       })
       session.on('transport_event', handleTransportEvent)
-      session.on('audio_start', () => {
-        const startedAt = pendingPromptStartedAtRef.current
-        if (startedAt) {
-          const latency = Math.max(0, performance.now() - startedAt)
-          pendingPromptStartedAtRef.current = null
-          setMetrics((current) => ({
-            ...current,
-            firstResponseLatencyMs: current.firstResponseLatencyMs ?? latency,
-            promptLatenciesMs: [...current.promptLatenciesMs, latency],
-          }))
-        }
-        setIsSpeaking(true)
-      })
-      session.on('audio_stopped', () => setIsSpeaking(false))
+      session.on('audio_start', observerStartedSpeaking)
+      session.on('audio_stopped', observerStoppedSpeaking)
       session.on('audio_interrupted', () => {
-        setIsSpeaking(false)
+        observerStoppedSpeaking()
         setMetrics((current) => ({ ...current, interruptions: current.interruptions + 1 }))
       })
 
@@ -502,8 +495,41 @@ export default function App() {
     }
   }
 
+  // Over WebRTC the SDK's audio_start/audio_stopped never fire, so playback events drive these too.
+  function observerStartedSpeaking() {
+    const startedAt = pendingPromptStartedAtRef.current
+    if (startedAt) {
+      const latency = Math.max(0, performance.now() - startedAt)
+      pendingPromptStartedAtRef.current = null
+      setMetrics((current) => ({
+        ...current,
+        firstResponseLatencyMs: current.firstResponseLatencyMs ?? latency,
+        promptLatenciesMs: [...current.promptLatenciesMs, latency],
+      }))
+    }
+    isSpeakingRef.current = true
+    setIsSpeaking(true)
+  }
+
+  function observerStoppedSpeaking() {
+    isSpeakingRef.current = false
+    setIsSpeaking(false)
+    // The clock for a new question starts once the Observer has finished asking it.
+    if (askPendingUntilRef.current) {
+      askPendingUntilRef.current = 0
+      graceUntilRef.current = Date.now() + 400
+    }
+  }
+
   function handleTransportEvent(event: RealtimeTransportEvent) {
     switch (event.type) {
+      case 'output_audio_buffer.started':
+        observerStartedSpeaking()
+        break
+      case 'output_audio_buffer.stopped':
+      case 'output_audio_buffer.cleared':
+        observerStoppedSpeaking()
+        break
       case 'response.created':
         responseActiveRef.current = true
         break
