@@ -422,7 +422,7 @@ function realtimeSessionParams(
           },
           turn_detection: {
             type: 'semantic_vad',
-            create_response: false,
+            create_response: true,
             interrupt_response: true,
             eagerness: 'medium',
           },

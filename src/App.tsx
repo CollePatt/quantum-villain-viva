@@ -39,6 +39,7 @@ import {
   buildAnswerTransitionPrompt,
   buildFinalAnswerPrompt,
   buildHintTauntPrompt,
+  buildHintToolResult,
   buildQuestionPrompt,
   buildVillainInstructions,
   spokenQuestion,
@@ -47,6 +48,7 @@ import {
 import { speakLocally, stopLocalSpeech } from './lib/localVoice'
 import { extractTranscriptEntries } from './lib/transcript'
 import { villainLines } from './lib/villainLines'
+import { z } from 'zod'
 
 type Screen = 'home' | 'play' | 'results'
 type Phase = 'idle' | 'answering' | 'judging' | 'done'
@@ -173,6 +175,10 @@ export default function App() {
   const sessionStartedAtRef = useRef<number | null>(null)
   const pendingPromptStartedAtRef = useRef<number | null>(null)
   const lockInRef = useRef<(choice?: number) => void>(() => undefined)
+  // The live Observer calls these tools mid-conversation; they always see the latest state.
+  const toolLockInRef = useRef<() => Promise<string | null>>(async () => null)
+  const toolHintRef = useRef<() => string | null>(() => null)
+  const responseActiveRef = useRef(false)
   const moodTimerRef = useRef(0)
   const bannerTimerRef = useRef(0)
 
@@ -302,6 +308,11 @@ export default function App() {
       return
     }
     pendingPromptStartedAtRef.current = performance.now()
+    if (responseActiveRef.current) {
+      // The Observer may be mid-chat; the game's own line takes priority.
+      session.interrupt()
+      responseActiveRef.current = false
+    }
     if (session.transport.requestResponse) {
       session.transport.requestResponse({ instructions: prompt, output_modalities: ['audio'] })
       return
@@ -394,11 +405,26 @@ export default function App() {
       })
 
       // Loaded on demand so the first screen stays light on phones.
-      const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime')
+      const { RealtimeAgent, RealtimeSession, tool } = await import('@openai/agents/realtime')
       const agent = new RealtimeAgent({
         name: 'The Observer',
         instructions: buildVillainInstructions(topic),
         voice: token.realtimeVoice,
+        tools: [
+          tool({
+            name: 'lock_in_answer',
+            description: 'Lock in the player’s answer once they have clearly given it. Returns the verdict and what to say next.',
+            parameters: z.object({}),
+            execute: async () =>
+              (await toolLockInRef.current()) ?? 'Nothing to lock in right now. Say nothing and keep listening.',
+          }),
+          tool({
+            name: 'use_hint',
+            description: 'Give the player a hint when they ask for one. It costs them points.',
+            parameters: z.object({}),
+            execute: async () => toolHintRef.current() ?? 'No hint available. Tell them they already used it.',
+          }),
+        ],
       })
       const session = new RealtimeSession(agent, {
         model: token.realtimeModel,
@@ -414,7 +440,8 @@ export default function App() {
               },
               turnDetection: {
                 type: 'semantic_vad',
-                createResponse: false,
+                // The Observer answers the player directly, so it feels like a conversation.
+                createResponse: true,
                 interruptResponse: true,
                 eagerness: 'medium',
               },
@@ -477,6 +504,12 @@ export default function App() {
 
   function handleTransportEvent(event: RealtimeTransportEvent) {
     switch (event.type) {
+      case 'response.created':
+        responseActiveRef.current = true
+        break
+      case 'response.done':
+        responseActiveRef.current = false
+        break
       case 'input_audio_buffer.speech_started':
         transcriptPendingRef.current = true
         setIsPlayerSpeaking(true)
@@ -529,10 +562,12 @@ export default function App() {
     }
   }
 
-  async function lockIn(choice?: number) {
+  // Returns the Observer's next instructions when the live voice asked for the lock-in itself.
+  async function lockIn(choice?: number, viaTool = false): Promise<string | null> {
     if (lockingRef.current || phaseRef.current !== 'answering') {
-      return
+      return null
     }
+    const answerViaTool = viaTool && voiceMode === 'realtime' && Boolean(sessionRef.current)
     lockingRef.current = true
     setIsLocking(true)
     const roundId = roundIdRef.current
@@ -577,7 +612,7 @@ export default function App() {
     lockingRef.current = false
     setIsLocking(false)
     if (roundId !== roundIdRef.current) {
-      return
+      return null
     }
 
     const isLast = answersRef.current.length + 1 >= ROUND_LENGTH
@@ -614,14 +649,15 @@ export default function App() {
 
     if (isLast) {
       setPhaseNow('done')
-      deliver(
-        voiceMode,
-        buildFinalAnswerPrompt(asked, answerText, verdict, line),
-        line,
-        `${line} ${villainLines.final}`,
-      )
+      const finalPrompt = buildFinalAnswerPrompt(asked, answerText, verdict, line)
+      if (answerViaTool) {
+        setVillainLine(line)
+        void finish(nextAnswers, nextTier.tier, roundId)
+        return finalPrompt
+      }
+      deliver(voiceMode, finalPrompt, line, `${line} ${villainLines.final}`)
       await finish(nextAnswers, nextTier.tier, roundId)
-      return
+      return null
     }
 
     const upcoming = nextQuestion(
@@ -631,34 +667,47 @@ export default function App() {
     )
     showQuestion(upcoming)
     setPhaseNow('answering')
-    deliver(
-      voiceMode,
-      buildAnswerTransitionPrompt(asked, answerText, verdict, line, upcoming, nextAnswers.length + 1),
-      line,
-      `${line} ${spokenQuestion(upcoming)}`,
-    )
+    const transition = buildAnswerTransitionPrompt(asked, answerText, verdict, line, upcoming, nextAnswers.length + 1)
+    if (answerViaTool) {
+      setVillainLine(line)
+      return transition
+    }
+    deliver(voiceMode, transition, line, `${line} ${spokenQuestion(upcoming)}`)
+    return null
   }
   useEffect(() => {
     lockInRef.current = (choice?: number) => void lockIn(choice)
+    toolLockInRef.current = () => lockIn(undefined, true)
+    toolHintRef.current = () => takeHint(true)
   })
 
-  function takeHint() {
+  // Returns what the live Observer should say when it gave the hint itself.
+  function takeHint(viaTool = false): string | null {
     if (usedHint || phaseRef.current !== 'answering') {
-      return
+      return null
     }
     setUsedHint(true)
     const current = questionRef.current
+    let struck: number | null = null
     if (current.choices) {
       const wrong = current.choices.map((_, index) => index).filter((index) => index !== current.answer)
-      setStruckChoice(wrong[Math.floor(Math.random() * wrong.length)])
+      struck = wrong[Math.floor(Math.random() * wrong.length)]
+      setStruckChoice(struck)
     }
     flashMood('smug', 2000)
     const taunt = villainLines.hint()
+    if (viaTool) {
+      const hint = current.choices
+        ? `It is not ${LETTERS[struck ?? 0]}, ${current.choices[struck ?? 0]}.`
+        : (current.hint ?? `Think about ${current.expectedConcepts[0]}.`)
+      return buildHintToolResult(hint)
+    }
     if (voiceMode === 'realtime' && sessionRef.current) {
       sendVoicePrompt(buildHintTauntPrompt())
     } else {
       speakLine(taunt, taunt)
     }
+    return null
   }
 
   function toggleMic() {
@@ -711,8 +760,12 @@ export default function App() {
       }
     }
 
-    // Let the Observer finish his last line before the results replace the screen.
-    const deadline = Date.now() + 4000
+    // Let the Observer start and finish his last line before the results replace the screen.
+    const startBy = Date.now() + 2500
+    while (voiceMode === 'realtime' && !isSpeakingRef.current && Date.now() < startBy) {
+      await wait(150)
+    }
+    const deadline = Date.now() + 6000
     while (isSpeakingRef.current && Date.now() < deadline) {
       await wait(150)
     }
@@ -836,7 +889,7 @@ export default function App() {
           villainLine={villainLine}
           usedHint={usedHint}
           struckChoice={struckChoice}
-          onHint={takeHint}
+          onHint={() => takeHint()}
           isLocking={isLocking}
           isJudging={phase === 'judging' && !isGrading}
           isGrading={isGrading}
