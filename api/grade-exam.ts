@@ -927,7 +927,8 @@ function getRuntimeConfig(): RuntimeConfig {
     requiresAccessCode: Boolean(accessCode.trim() || adminCode.trim()),
     graderModel: process.env.OPENAI_GRADER_MODEL ?? 'gpt-4.1-mini',
     allowedOrigins: parseCsv(process.env.ALLOWED_ORIGINS, DEFAULT_ALLOWED_ORIGINS),
-    rateLimitEnabled: parseBoolean(process.env.RATE_LIMIT_ENABLED, false),
+    // On by default when hosted on Vercel, so a public link can't drain the OpenAI budget.
+    rateLimitEnabled: parseBoolean(process.env.RATE_LIMIT_ENABLED, Boolean(process.env.VERCEL)),
     rateLimitMax: parseInteger(process.env.RATE_LIMIT_MAX, 20),
     rateLimitAdminMax: parseInteger(process.env.RATE_LIMIT_ADMIN_MAX, 200),
     rateLimitWindowMinutes: parseInteger(process.env.RATE_LIMIT_WINDOW_MINUTES, 60),

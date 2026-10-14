@@ -17,6 +17,14 @@ type Recognition = {
 }
 type RecognitionConstructor = new () => Recognition
 
+const MIC_BLOCKED = 'Microphone blocked here. Type your answer instead.'
+const FATAL_ERRORS: Record<string, string> = {
+  'not-allowed': MIC_BLOCKED,
+  'service-not-allowed': MIC_BLOCKED,
+  'audio-capture': 'No microphone found. Type your answer instead.',
+  network: 'Speech recognition is offline. Type your answer instead.',
+}
+
 function getRecognitionConstructor(): RecognitionConstructor | null {
   if (typeof window === 'undefined') {
     return null
@@ -72,9 +80,11 @@ export function useSpeechRecognition(onFinalText: (text: string) => void) {
       setInterim(interimText)
     }
     recognition.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      const message = FATAL_ERRORS[event.error]
+      if (message) {
+        // Retrying these just loops, so stop and let the player type.
         wantsListeningRef.current = false
-        setError('Microphone blocked. You can type your answer instead.')
+        setError(message)
       }
     }
     recognition.onend = () => {

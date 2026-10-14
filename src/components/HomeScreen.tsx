@@ -1,6 +1,8 @@
-import { ArrowRight, Mic, Trophy } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowRight, ExternalLink, Mic, Trophy } from 'lucide-react'
 import { topics } from '../domain/topics'
 import type { TopicId } from '../domain/schemas'
+import { androidBrowserUrl, type InAppBrowser } from '../lib/inAppBrowser'
 import { Observer } from './Observer'
 
 export type TopicChoice = TopicId | 'random'
@@ -12,6 +14,7 @@ type HomeScreenProps = {
   accessCode: string
   onAccessCodeChange: (code: string) => void
   isLiveVoice: boolean
+  inAppBrowser: InAppBrowser | null
   onStart: () => void
   onOpenBoard: () => void
 }
@@ -23,6 +26,7 @@ export function HomeScreen({
   accessCode,
   onAccessCodeChange,
   isLiveVoice,
+  inAppBrowser,
   onStart,
   onOpenBoard,
 }: HomeScreenProps) {
@@ -109,6 +113,8 @@ export function HomeScreen({
           </label>
         ) : null}
 
+        {inAppBrowser ? <OpenInBrowser browser={inAppBrowser} /> : null}
+
         <div className="start-dock">
           <button type="button" className="cta" onClick={onStart}>
             <span>Be observed</span>
@@ -120,5 +126,37 @@ export function HomeScreen({
         </div>
       </div>
     </section>
+  )
+}
+
+function OpenInBrowser({ browser }: { browser: InAppBrowser }) {
+  const [copied, setCopied] = useState(false)
+  const href = typeof window === 'undefined' ? '' : window.location.href
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(href)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="in-app-note" role="note">
+      <p>
+        <b>Opened inside {browser.app}?</b> Its browser often blocks the mic. You can still type, or{' '}
+        {browser.platform === 'ios' ? 'tap ··· and choose Open in Safari to hear the Observer.' : 'open the game in your browser.'}
+      </p>
+      {browser.platform === 'android' ? (
+        <a className="text-link" href={androidBrowserUrl(href)}>
+          <ExternalLink size={14} /> Open in browser
+        </a>
+      ) : (
+        <button type="button" className="text-link" onClick={copyLink}>
+          <ExternalLink size={14} /> {copied ? 'Link copied' : 'Copy link'}
+        </button>
+      )}
+    </div>
   )
 }

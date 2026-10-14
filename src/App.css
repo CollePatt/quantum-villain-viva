@@ -1451,3 +1451,17 @@ details[open] .q-feedback {
     align-self: start;
   }
 }
+
+.in-app-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 2px dashed var(--ink);
+  font-size: 0.8rem;
+}
+
+.in-app-note p {
+  margin: 0;
+  line-height: 1.4;
+}

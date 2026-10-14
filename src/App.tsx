@@ -23,6 +23,7 @@ import { PlayScreen, type VoiceMode } from './components/PlayScreen'
 import { ResultsScreen, type ScoredQuestion } from './components/ResultsScreen'
 import { useLeaderboard } from './hooks/useLeaderboard'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { detectInAppBrowser } from './lib/inAppBrowser'
 import {
   accessHeaders,
   fetchJson,
@@ -110,6 +111,12 @@ function readBests(): Record<string, number> {
   }
 }
 
+// getUserMedia rejects with these when the browser or an in-app webview refuses the mic.
+function isMicDenied(error: unknown): boolean {
+  const name = error instanceof Error || error instanceof DOMException ? error.name : ''
+  return ['NotAllowedError', 'NotFoundError', 'SecurityError', 'NotReadableError'].includes(name)
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
@@ -142,6 +149,10 @@ export default function App() {
   const [isGrading, setIsGrading] = useState(false)
   const [report, setReport] = useState<GradedReport | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [micBlocked, setMicBlocked] = useState<string | null>(null)
+  const [inAppBrowser] = useState(() =>
+    typeof navigator === 'undefined' ? null : detectInAppBrowser(navigator.userAgent),
+  )
   const [metrics, setMetrics] = useState<ExamMetrics>(createEmptyMetrics)
   const [accessCode, setAccessCode] = useState(readAccessCode)
   const [isBoardOpen, setIsBoardOpen] = useState(false)
@@ -336,6 +347,7 @@ export default function App() {
     setTierBanner(null)
     setReport(null)
     setNotice(null)
+    setMicBlocked(null)
     setVillainLine('')
     setMetrics({ ...createEmptyMetrics(), sessionStartedAt: new Date().toISOString() })
     sessionStartedAtRef.current = performance.now()
@@ -449,11 +461,16 @@ export default function App() {
       }
       setIsConnecting(false)
       askFirstQuestion(topic, 'realtime')
-    } catch {
+    } catch (error) {
       sessionRef.current?.close()
       sessionRef.current = null
       if (roundId === roundIdRef.current) {
-        startLocal(topic, 'Live voice is busy, so the Observer is using your browser’s voice.')
+        if (isMicDenied(error)) {
+          setMicBlocked('Microphone blocked here. Type your answer instead.')
+          startLocal(topic)
+        } else {
+          startLocal(topic, 'Live voice is busy, so the Observer is using your browser’s voice.')
+        }
       }
     }
   }
@@ -785,6 +802,7 @@ export default function App() {
           accessCode={accessCode}
           onAccessCodeChange={setAccessCode}
           isLiveVoice={Boolean(config?.hasApiKey)}
+          inAppBrowser={inAppBrowser}
           onStart={startRound}
           onOpenBoard={() => {
             setIsBoardOpen(true)
@@ -814,7 +832,7 @@ export default function App() {
           isListening={speech.isListening}
           canListen={speech.isSupported}
           onToggleMic={toggleMic}
-          micError={speech.error}
+          micError={speech.error ?? micBlocked}
           villainLine={villainLine}
           usedHint={usedHint}
           struckChoice={struckChoice}

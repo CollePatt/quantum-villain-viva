@@ -90,7 +90,7 @@ export function PlayScreen(props: PlayScreenProps) {
   const remaining = Math.max(0, Math.ceil(timeLimit - elapsed))
   const urgent = remaining <= (tier === 'curious' ? 5 : 10)
   const isChoice = Boolean(question.choices)
-  const showTextBox = !isChoice && (isTyping || (voiceMode === 'local' && !canListen))
+  const showTextBox = !isChoice && (isTyping || Boolean(micError) || (voiceMode === 'local' && !canListen))
   const hearing = voiceMode === 'realtime' ? isPlayerSpeaking : isListening
   const busy = isLocking || isJudging
   const banner = tierBanner ? BANNER_TEXT[tierBanner] : undefined
