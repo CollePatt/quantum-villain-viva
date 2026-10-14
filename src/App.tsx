@@ -482,8 +482,9 @@ export default function App() {
         setMetrics((current) => ({ ...current, transcriptItems: entries.length }))
       })
       session.on('transport_event', handleTransportEvent)
+      // audio_stopped fires when OpenAI finishes generating audio, seconds before it finishes
+      // playing over WebRTC, so the clock relies on output_audio_buffer.stopped instead.
       session.on('audio_start', observerStartedSpeaking)
-      session.on('audio_stopped', observerStoppedSpeaking)
       session.on('audio_interrupted', () => {
         observerStoppedSpeaking()
         setMetrics((current) => ({ ...current, interruptions: current.interruptions + 1 }))
