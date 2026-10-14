@@ -189,7 +189,7 @@ export function PlayScreen(props: PlayScreenProps) {
           <div className="question-wrap">
             <article className={isJudging ? 'question-card judging' : 'question-card'}>
               <span className="question-kicker">
-                {questionIndex === 0 ? 'Measurement' : `Question ${pad(questionIndex + 1)}`} ·{' '}
+                Question {pad(questionIndex + 1)} ·{' '}
                 {tier === 'physicist' ? 'Hard' : 'Multiple choice'}
               </span>
               <h2>{question.prompt}</h2>
