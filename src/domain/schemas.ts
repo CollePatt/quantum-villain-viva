@@ -33,12 +33,16 @@ export const TopicSchema = z.object({
   curiousQuestions: z.array(QuestionSchema).length(3),
 })
 
+// Turns and metrics go to the paid grader, so text is cut to a size no real answer reaches.
+// Mirrored in api/grade-exam.ts.
+const cappedText = (max: number) => z.string().transform((text) => text.slice(0, max))
+
 export const ExamTurnSchema = z.object({
-  questionId: z.string(),
-  question: z.string(),
-  answer: z.string().min(1),
-  followUpQuestion: z.string().optional(),
-  followUpAnswer: z.string().optional(),
+  questionId: z.string().max(64),
+  question: cappedText(1000),
+  answer: z.string().min(1).transform((text) => text.slice(0, 4000)),
+  followUpQuestion: cappedText(1000).optional(),
+  followUpAnswer: cappedText(4000).optional(),
   secondsUsed: z.number().nonnegative().optional(),
   usedHint: z.boolean().optional(),
   choiceIndex: z.number().int().min(0).max(2).optional(),
@@ -82,10 +86,16 @@ export const TokenRequestSchema = z.object({
   topicId: TopicIdSchema,
 })
 
+const RequestMetricsSchema = ExamMetricsSchema.extend({
+  sessionStartedAt: z.string().max(40).nullable(),
+  sessionEndedAt: z.string().max(40).nullable(),
+  promptLatenciesMs: z.array(z.number().nonnegative()).transform((latencies) => latencies.slice(0, 64)),
+})
+
 export const GradeRequestSchema = z.object({
   topicId: TopicIdSchema,
   turns: z.array(ExamTurnSchema).min(1).max(4),
-  metrics: ExamMetricsSchema,
+  metrics: RequestMetricsSchema,
 })
 
 export type TopicId = z.infer<typeof TopicIdSchema>

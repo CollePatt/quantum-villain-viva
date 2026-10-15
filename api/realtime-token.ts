@@ -115,9 +115,11 @@ export default async function handler(request: IncomingMessage, response: Server
     const { default: OpenAI } = await import('openai')
     const client = new OpenAI({ apiKey: config.apiKey })
     const secret = await client.realtime.clientSecrets.create({
+      // The browser connects straight away (after the mic prompt), so a short life is plenty.
+      // A secret can open new sessions until it expires.
       expires_after: {
         anchor: 'created_at',
-        seconds: 600,
+        seconds: 120,
       },
       session: {
         type: 'realtime',
@@ -160,9 +162,9 @@ export default async function handler(request: IncomingMessage, response: Server
       realtimeVoice: config.realtimeVoice,
     })
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Could not create a Realtime client secret.'
-    sendServerError(response, message)
+    // OpenAI's error text can name the organization or quota, so it stays in the server logs.
+    console.error('Realtime client secret failed:', error instanceof Error ? error.message : error)
+    sendServerError(response, 'Could not start live voice.')
   }
 }
 
@@ -289,6 +291,11 @@ function enforceHostedAccess(
   body: unknown,
 ): boolean {
   const access = checkAccess(request, config, body)
+  // Wrong codes use up the same allowance, so the code can't be guessed by brute force.
+  if (!enforceRateLimit(request, response, config, access.isAdmin)) {
+    return false
+  }
+
   if (!access.ok) {
     sendJson(response, 401, {
       error: {
@@ -299,7 +306,7 @@ function enforceHostedAccess(
     return false
   }
 
-  return enforceRateLimit(request, response, config, access.isAdmin)
+  return true
 }
 
 function checkAccess(request: IncomingMessage, config: RuntimeConfig, body: unknown) {
@@ -330,7 +337,8 @@ function enforceRateLimit(
   const now = Date.now()
   const max = isAdmin ? config.rateLimitAdminMax : config.rateLimitMax
   const windowMs = config.rateLimitWindowMinutes * 60 * 1000
-  const key = `${isAdmin ? 'admin' : 'review'}:${getClientKey(request)}:${request.url ?? 'api'}`
+  // Keyed by route name, not request.url, so adding ?anything can't start a fresh count.
+  const key = `${isAdmin ? 'admin' : 'review'}:${getClientKey(request)}:realtime-token`
   const current = rateLimitBuckets.get(key)
 
   if (!current || current.resetAt <= now) {

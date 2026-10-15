@@ -266,12 +266,13 @@ function enforceHostedAccess(
   config: ReturnType<typeof getConfig>,
 ): { ok: true; isAdmin: boolean } | { ok: false } {
   const access = checkAccess(request, config)
-  if (!access.ok) {
-    sendAuthError(response)
+  // Wrong codes use up the same allowance, so the code can't be guessed by brute force.
+  if (!enforceRateLimit(request, response, config, access.isAdmin)) {
     return { ok: false }
   }
 
-  if (!enforceRateLimit(request, response, config, access.isAdmin)) {
+  if (!access.ok) {
+    sendAuthError(response)
     return { ok: false }
   }
 
@@ -399,9 +400,11 @@ function realtimeSessionParams(
   realtimeVoice: string,
 ): ClientSecretCreateParams {
   return {
+    // The browser connects straight away (after the mic prompt), so a short life is plenty.
+    // A secret can open new sessions until it expires.
     expires_after: {
       anchor: 'created_at',
-      seconds: 600,
+      seconds: 120,
     },
     session: {
       type: 'realtime',
@@ -531,11 +534,9 @@ export function createApp(deps: ServerDeps = {}): Express {
         realtimeVoice: config.realtimeVoice,
       })
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Could not create a Realtime client secret.'
-      sendServerError(response, message)
+      // OpenAI's error text can name the organization or quota, so it stays in the server logs.
+      console.error('Realtime client secret failed:', error instanceof Error ? error.message : error)
+      sendServerError(response, 'Could not start live voice.')
     }
   })
 
