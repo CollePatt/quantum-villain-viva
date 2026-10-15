@@ -659,7 +659,6 @@ function parseGradeRequest(
     metrics?: unknown
   }
   const topicId = candidate.topicId
-  const metrics = candidate.metrics
 
   if (typeof topicId !== 'string' || !TOPICS.some((topic) => topic.id === topicId)) {
     return null
@@ -669,7 +668,8 @@ function parseGradeRequest(
     return null
   }
 
-  if (!isMetrics(metrics)) {
+  const metrics = parseMetrics(candidate.metrics)
+  if (!metrics) {
     return null
   }
 
@@ -683,6 +683,18 @@ function parseGradeRequest(
     turns: turns as ExamTurn[],
     metrics,
   }
+}
+
+// Turns and metrics go to the paid grader, so text is cut to a size no real answer reaches.
+// Mirrored in src/domain/schemas.ts.
+const MAX_ID_CHARS = 64
+const MAX_QUESTION_CHARS = 1000
+const MAX_ANSWER_CHARS = 4000
+const MAX_TIMESTAMP_CHARS = 40
+const MAX_LATENCIES = 64
+
+function cap(value: unknown, max: number): string | undefined {
+  return typeof value === 'string' ? value.slice(0, max) : undefined
 }
 
 function parseTurn(turn: unknown): ExamTurn | null {
@@ -702,6 +714,7 @@ function parseTurn(turn: unknown): ExamTurn | null {
 
   if (
     typeof candidate.questionId !== 'string' ||
+    candidate.questionId.length > MAX_ID_CHARS ||
     typeof candidate.question !== 'string' ||
     typeof candidate.answer !== 'string' ||
     !candidate.answer.trim()
@@ -711,12 +724,10 @@ function parseTurn(turn: unknown): ExamTurn | null {
 
   return {
     questionId: candidate.questionId,
-    question: candidate.question,
-    answer: candidate.answer,
-    followUpQuestion:
-      typeof candidate.followUpQuestion === 'string' ? candidate.followUpQuestion : undefined,
-    followUpAnswer:
-      typeof candidate.followUpAnswer === 'string' ? candidate.followUpAnswer : undefined,
+    question: candidate.question.slice(0, MAX_QUESTION_CHARS),
+    answer: candidate.answer.slice(0, MAX_ANSWER_CHARS),
+    followUpQuestion: cap(candidate.followUpQuestion, MAX_QUESTION_CHARS),
+    followUpAnswer: cap(candidate.followUpAnswer, MAX_ANSWER_CHARS),
     choiceIndex:
       typeof candidate.choiceIndex === 'number' && Number.isInteger(candidate.choiceIndex)
         ? candidate.choiceIndex
@@ -725,23 +736,38 @@ function parseTurn(turn: unknown): ExamTurn | null {
   }
 }
 
-function isMetrics(metrics: unknown): metrics is ExamMetrics {
+// Builds a fresh object, so extra fields a caller adds never reach the grader.
+function parseMetrics(metrics: unknown): ExamMetrics | null {
   if (!metrics || typeof metrics !== 'object') {
-    return false
+    return null
   }
 
   const candidate = metrics as ExamMetrics
-  return (
-    typeof candidate.durationMs === 'number' &&
-    candidate.durationMs >= 0 &&
-    (candidate.firstResponseLatencyMs === null ||
-      typeof candidate.firstResponseLatencyMs === 'number') &&
-    Array.isArray(candidate.promptLatenciesMs) &&
-    typeof candidate.interruptions === 'number' &&
-    typeof candidate.transcriptItems === 'number' &&
-    (candidate.sessionStartedAt === null || typeof candidate.sessionStartedAt === 'string') &&
-    (candidate.sessionEndedAt === null || typeof candidate.sessionEndedAt === 'string')
-  )
+  const isTimestamp = (value: unknown) =>
+    value === null || (typeof value === 'string' && value.length <= MAX_TIMESTAMP_CHARS)
+  if (
+    !(typeof candidate.durationMs === 'number' && candidate.durationMs >= 0) ||
+    !(candidate.firstResponseLatencyMs === null ||
+      typeof candidate.firstResponseLatencyMs === 'number') ||
+    !Array.isArray(candidate.promptLatenciesMs) ||
+    !candidate.promptLatenciesMs.every((latency) => typeof latency === 'number') ||
+    typeof candidate.interruptions !== 'number' ||
+    typeof candidate.transcriptItems !== 'number' ||
+    !isTimestamp(candidate.sessionStartedAt) ||
+    !isTimestamp(candidate.sessionEndedAt)
+  ) {
+    return null
+  }
+
+  return {
+    sessionStartedAt: candidate.sessionStartedAt,
+    sessionEndedAt: candidate.sessionEndedAt,
+    durationMs: candidate.durationMs,
+    firstResponseLatencyMs: candidate.firstResponseLatencyMs,
+    promptLatenciesMs: candidate.promptLatenciesMs.slice(0, MAX_LATENCIES),
+    interruptions: candidate.interruptions,
+    transcriptItems: candidate.transcriptItems,
+  }
 }
 
 function gradeExamLocally(topic: Topic, turns: ExamTurn[], metrics: ExamMetrics): ExamReport {
@@ -1059,6 +1085,11 @@ function enforceHostedAccess(
   body: unknown,
 ): boolean {
   const access = checkAccess(request, config, body)
+  // Wrong codes use up the same allowance, so the code can't be guessed by brute force.
+  if (!enforceRateLimit(request, response, config, access.isAdmin)) {
+    return false
+  }
+
   if (!access.ok) {
     sendJson(response, 401, {
       error: {
@@ -1069,7 +1100,7 @@ function enforceHostedAccess(
     return false
   }
 
-  return enforceRateLimit(request, response, config, access.isAdmin)
+  return true
 }
 
 function checkAccess(request: IncomingMessage, config: RuntimeConfig, body: unknown) {
@@ -1100,7 +1131,8 @@ function enforceRateLimit(
   const now = Date.now()
   const max = isAdmin ? config.rateLimitAdminMax : config.rateLimitMax
   const windowMs = config.rateLimitWindowMinutes * 60 * 1000
-  const key = `${isAdmin ? 'admin' : 'review'}:${getClientKey(request)}:${request.url ?? 'api'}`
+  // Keyed by route name, not request.url, so adding ?anything can't start a fresh count.
+  const key = `${isAdmin ? 'admin' : 'review'}:${getClientKey(request)}:grade-exam`
   const current = rateLimitBuckets.get(key)
 
   if (!current || current.resetAt <= now) {

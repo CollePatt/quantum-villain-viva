@@ -1,5 +1,5 @@
 import request from 'supertest'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createApp } from './app'
 import type { ExamMetrics } from '../src/domain/schemas'
 import { getTopicById } from '../src/domain/topics'
@@ -134,6 +134,42 @@ describe('API routes', () => {
     expect(final.body.scoreToken).toBeTruthy()
     // The sealed measurement was not sent to the grader a second time.
     expect(graderCalls).toBe(1)
+  })
+
+  it('cuts long answers and metrics before they reach the grader', async () => {
+    let graded: { answer: string; latencies: number } | null = null
+    const app = createApp({
+      apiKey: 'sk-test',
+      gradeWithOpenAI: async (_topic, turns, examMetrics) => {
+        graded = { answer: turns[0].answer, latencies: examMetrics.promptLatenciesMs.length }
+        throw new Error('fall back to the local grader')
+      },
+    })
+    const response = await request(app)
+      .post('/api/grade-exam')
+      .send({
+        topicId: 'spin',
+        turns: [{ questionId: 'spin-1', question: 'Spin?', answer: 'up '.repeat(5000) }],
+        metrics: { ...metrics, promptLatenciesMs: Array(500).fill(5) },
+      })
+
+    expect(response.status).toBe(200)
+    expect(graded).toEqual({ answer: 'up '.repeat(5000).slice(0, 4000), latencies: 64 })
+  })
+
+  it('keeps OpenAI error text out of the response', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const app = createApp({
+      apiKey: 'sk-test',
+      createClientSecret: async () => {
+        throw new Error('Incorrect API key provided: sk-proj-abc***wxyz.')
+      },
+    })
+    const response = await request(app).post('/api/realtime-token').send({ topicId: 'spin' })
+
+    expect(response.status).toBe(502)
+    expect(response.body.error.message).toBe('Could not start live voice.')
+    vi.restoreAllMocks()
   })
 
   it('returns a created client secret when the key boundary is mocked', async () => {
